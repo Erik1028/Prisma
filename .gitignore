@@ -1,0 +1,33 @@
+# ---- Build output ----
+bin/
+obj/
+dist/
+publish/
+publish-*/
+*.tar.gz
+
+# ---- DIAGNOSTIC OUTPUT — never publish (contains this machine's hardware inventory,
+#      adapter names, device serials and SMBus/I2C probe dumps) ----
+rgbc-debug.log
+adl-diag.txt
+gpu-diag.txt
+mouse-diag.txt
+gpu-sensors.txt
+test-log.txt
+prisma-diagnostics.txt
+
+# ---- Dev scratch / strays ----
+icon-preview.png
+lookup_A*.html
+*measure.ps1
+*.tmp
+
+# ---- Local agent / IDE settings ----
+.claude/
+.vs/
+*.user
+*.suo
+
+# ---- OS ----
+Thumbs.db
+.DS_Store

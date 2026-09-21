@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>RGBCommander</AssemblyName>
+    <RootNamespace>RGBCommander</RootNamespace>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <Version>2.0.0</Version>
+    <Product>Prisma</Product>
+    <AssemblyTitle>Prisma</AssemblyTitle>
+    <!-- AssemblyName stays RGBCommander on purpose: the single-instance mutex, the
+         %APPDATA% settings folder, the dist\ exe path and the autostart registry entry
+         all reference it — renaming would orphan the user's settings and autostart. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NAudio.Wasapi" Version="2.3.0" />
+  </ItemGroup>
+
+</Project>
