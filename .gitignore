@@ -31,3 +31,4 @@ lookup_A*.html
 # ---- OS ----
 Thumbs.db
 .DS_Store
+out/
