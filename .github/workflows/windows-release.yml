@@ -1,0 +1,87 @@
+name: Windows release
+
+# Builds the Windows app on GitHub's runners instead of a developer machine, which is what a code
+# signing service needs to see: a public, reproducible build it can attach a certificate to.
+#
+# Two artifacts, on purpose:
+#   Prisma.exe                     self-contained, no install, ~162 MB (what the releases carry)
+#   Prisma-<ver>-win-x64.zip       framework-dependent, ~0.4 MB, needs the .NET 8 Desktop Runtime
+#
+# The assembly is named RGBCommander on purpose (mutex / settings folder / autostart all reference
+# it), so both artifacts are renamed to the product name on the way out.
+#
+# Manual runs upload both as artifacts; tag pushes also attach them to the release.
+#
+# SIGNING (not enabled yet — it needs an account first):
+#   SignPath (free for open source): add the signpath-actions step after "Publish" and before the
+#   upload, with the organization id / project / signing policy as repository secrets.
+#   Azure Trusted Signing: use azure/trusted-signing-action@v0 with the Azure credentials as secrets.
+# Both sign the built .exe in place, so nothing else in this file changes.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Read the version from the project file
+        id: ver
+        shell: pwsh
+        run: |
+          $v = ([xml](Get-Content RGBCommander.csproj)).Project.PropertyGroup.Version | Where-Object { $_ }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "Prisma $v"
+
+      - name: Publish (self-contained, single file)
+        run: >
+          dotnet publish RGBCommander.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          -o out/standalone
+
+      - name: Publish (framework-dependent, small)
+        run: >
+          dotnet publish RGBCommander.csproj
+          -c Release -r win-x64 --self-contained false
+          -p:PublishSingleFile=true
+          -o out/small
+
+      - name: Package both builds under the product name
+        shell: pwsh
+        run: |
+          Remove-Item out/standalone/*.pdb, out/small/*.pdb -ErrorAction SilentlyContinue
+          Rename-Item out/standalone/RGBCommander.exe Prisma.exe
+          Rename-Item out/small/RGBCommander.exe Prisma.exe
+          Compress-Archive -Path out/small/* -DestinationPath "Prisma-${{ steps.ver.outputs.version }}-win-x64.zip" -CompressionLevel Optimal
+          Get-ChildItem out/standalone/Prisma.exe, "Prisma-${{ steps.ver.outputs.version }}-win-x64.zip" |
+            Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,2)}}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Prisma-windows
+          path: |
+            out/standalone/Prisma.exe
+            Prisma-*-win-x64.zip
+          if-no-files-found: error
+
+      - name: Attach to release (tag builds)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/standalone/Prisma.exe
+            Prisma-*-win-x64.zip

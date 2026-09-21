@@ -11,6 +11,20 @@ one of them falls over — including a **native GPU driver** that bypasses OpenR
 
 ---
 
+## Download
+
+Grab the latest build from [**Releases**](https://github.com/Erik1028/Prisma/releases):
+
+| Asset | |
+|---|---|
+| **`Prisma.exe`** | Self-contained, ~162 MB. Nothing to install and no runtime needed — download and run. |
+| **`Prisma-<version>-win-x64.zip`** | ~0.4 MB. Needs the [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0). |
+
+Windows SmartScreen will warn the first time: the build is unsigned and has no
+reputation yet. *More info → Run anyway.*
+
+---
+
 ## Why
 
 Vendor RGB suites each own one brand, fight each other over the same SMBus, and
@@ -73,7 +87,8 @@ This is where most of the work went.
 ## Requirements
 
 - Windows 10 / 11
-- [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)
+- [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) — only for the
+  small `.zip` build; the self-contained `Prisma.exe` bundles its own runtime
 - For motherboard and RAM lighting: an [OpenRGB](https://openrgb.org/) server running
   **elevated** (SMBus access needs admin). A scheduled task at logon with *Run with
   highest privileges* is the cleanest way — Prisma will start it for you if it is
