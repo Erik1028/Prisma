@@ -17,6 +17,12 @@ test-log.txt
 prisma-diagnostics.txt
 
 # ---- Dev scratch / strays ----
+# n*.html / nano_models.html are iPod-nano model lookups that belong to the Mixtape
+# project, not this one; tools/ holds one-off keyboard+mic HID probes.
+n[0-9]*.html
+nano_models.html
+sandbox.txt
+tools/
 icon-preview.png
 lookup_A*.html
 *measure.ps1
