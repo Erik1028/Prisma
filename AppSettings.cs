@@ -90,6 +90,9 @@ public class AppSettings
     public bool IgnoreLogitechMouse { get; set; } = false;
     /// <summary>Schema version, bumped when a migration must run once on an older settings
     /// file (see <see cref="Load"/>). 0 = pre-versioning (lock+sleep were one toggle).</summary>
+    /// <summary>Settings ▸ Appearance ▸ Look: the Windows 95 skin (see Theme.SetSkin).</summary>
+    public bool ClassicSkin { get; set; } = false;
+
     public int SettingsVersion { get; set; } = 0;
     /// <summary>Turn all lighting off while the display sleeps, restore when it wakes.</summary>
     public bool OffWhenDisplaySleeps { get; set; } = false;
