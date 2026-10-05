@@ -121,6 +121,7 @@ public class MainForm : Form
     private CardPanel _headerCard = null!;
     private RoundedButton? _maxBtn; // custom caption maximise/restore button (glyph toggles with state)
     private Label _status = null!;
+    private Label _versionLabel = null!;
     private RainbowTitle _title = null!;     // clickable rainbow wordmark in the header
     private AboutPopup? _about;               // the About panel it opens (null when closed)
     private SleekSlider _speedBar = null!;
@@ -413,7 +414,8 @@ public class MainForm : Form
         var header = _headerCard = new CardPanel
         {
             Left = 12, Top = 12, Width = LEFT_COL_W + rightW - 24, Height = HEADER_CARD_H,
-            Anchor = AnchorStyles.Top | AnchorStyles.Left
+            Anchor = AnchorStyles.Top | AnchorStyles.Left,
+            CaptionStyle = Theme.Classic,   // Classic draws this card as the window's title bar
         };
         headerZone.Controls.Add(header);
 
@@ -506,12 +508,14 @@ public class MainForm : Form
         _title.TitleClicked += (_, _) => ShowAboutPanel();
         _tips.SetToolTip(_title, "About Prisma — version, devices, backends");
         header.Controls.Add(_title);
-        header.Controls.Add(new Label
+        _versionLabel = new Label
         {
             Text = "v" + Application.ProductVersion.Split('+')[0],
             Left = 14 + TextRenderer.MeasureText("PRISMA", titleFont).Width + 6, Top = 14,
             AutoSize = true, ForeColor = Theme.Subtle, Font = Theme.UiFont(8.5f)
-        });
+        };
+        header.Controls.Add(_versionLabel);
+        SyncCaptionText();
 
         // Header icon toolbar, laid out right-to-left so it stays anchored to the right
         // edge. Real icon-font glyphs (Segoe Fluent Icons) center optically; the old
@@ -1233,6 +1237,7 @@ public class MainForm : Form
         foreach (var btn in _effectButtons)
         {
             bool selected = (Effect)btn.Tag! == _effect;
+            btn.Latched = selected;   // Classic draws this as a held-down toolbar button
             btn.FillColor = selected ? Theme.AccentDim : Theme.RowBg;
             btn.HoverFillColor = selected ? Theme.AccentDim : Theme.RowHover;
             btn.ForeColor = selected ? Color.White : Theme.TextCol;
@@ -1482,6 +1487,28 @@ public class MainForm : Form
         OpenRgbRemoteDevice.GpuFollowExternal = _settings.GpuExternalControl;
     }
 
+    /// <summary>Classic puts the wordmark and version on the navy caption band, where the muted
+    /// grey of the modern look would be unreadable.</summary>
+    private void SyncCaptionText() =>
+        _versionLabel.ForeColor = Theme.Classic ? Color.White : Theme.Subtle;
+
+    /// <summary>Switches the Windows 95 skin on or off in place. Deliberately NOT a restart (which
+    /// is how the sibling apps do it): restarting Prisma re-detects every device, and a fresh SMBus/I2C
+    /// probe round is exactly what this app exists to avoid. Restyle carries the baked properties over;
+    /// everything else reads Theme inside OnPaint and follows on the next Invalidate.</summary>
+    private void ApplySkinChange()
+    {
+        if (Theme.Classic == _settings.ClassicSkin) return;
+        Theme.SetSkin(_settings.ClassicSkin);
+        Backdrop.Invalidate();
+        _headerCard.CaptionStyle = Theme.Classic;
+        foreach (Form f in Application.OpenForms.Cast<Form>().ToArray()) Restyle.Apply(f);
+        SyncCaptionText();   // after Restyle: the caption label is white on navy, not a token colour
+        LayoutColumns();
+        if (WindowState != FormWindowState.Minimized) LayoutLeftColumn();
+        UpdateTrayIcon();
+    }
+
     /// <summary>The opacity slider is suspended while liquid glass is on: a layered
     /// (semi-transparent) window breaks the DWM acrylic accent rendering.</summary>
     private double EffectiveOpacity() =>
@@ -1490,6 +1517,7 @@ public class MainForm : Form
     private void ApplySettingsChanged()
     {
         _settings.Save();
+        ApplySkinChange();
         SyncEffectTuning();
         ApplyHotkeys();
         Backdrop.Intensity = Math.Clamp(_settings.BackdropGlow, 0, 100);
@@ -2209,6 +2237,24 @@ public class MainForm : Form
                     {
                         var gpu = _deviceRows.Select(r => r.Device).OfType<SapphireNitroGlowDevice>().FirstOrDefault();
                         gpu?.WriteBrightnessRaw(gv);
+                        any = true;
+                    }
+                    break;
+                case "--skin": // modern | classic | toggle - the Settings toggle from a shortcut
+                    if (i + 1 < t.Length)
+                    {
+                        string want = t[++i].Trim().ToLowerInvariant();
+                        bool classic = want switch
+                        {
+                            "classic" or "95" or "win95" => true,
+                            "modern" => false,
+                            _ => !_settings.ClassicSkin,
+                        };
+                        if (classic != _settings.ClassicSkin)
+                        {
+                            _settings.ClassicSkin = classic;
+                            ApplySettingsChanged();
+                        }
                         any = true;
                     }
                     break;

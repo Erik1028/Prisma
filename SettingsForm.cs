@@ -238,6 +238,18 @@ public class SettingsForm : Form
             _applyChanges();
         };
         p.Controls.Add(glassRow);
+
+        var lookRow = new ToggleRow("Windows 95 look (square, grey, 3D edges)", _settings.ClassicSkin)
+        { Left = 0, Top = 438, Width = 412 };
+        lookRow.CheckedChanged += (_, _) =>
+        {
+            _settings.ClassicSkin = lookRow.Checked;
+            // Applies in place - no restart, so no device re-detect. See MainForm.ApplySkinChange.
+            _applyChanges();
+            glassRow.Enabled = opacityRow.Enabled = glowRow.Enabled = !lookRow.Checked;
+        };
+        glassRow.Enabled = opacityRow.Enabled = glowRow.Enabled = !lookRow.Checked;
+        p.Controls.Add(lookRow);
     }
 
     private void BuildAutoOffTab(Panel p)

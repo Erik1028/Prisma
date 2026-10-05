@@ -3,12 +3,12 @@ using System.Drawing.Imaging;
 
 namespace RGBCommander;
 
-public static class Theme
+public static partial class Theme
 {
-    public static readonly Color Bg = Color.FromArgb(16, 17, 20);
-    public static readonly Color PanelBg = Color.FromArgb(24, 26, 31);
-    public static readonly Color RowBg = Color.FromArgb(33, 36, 43);
-    public static readonly Color RowHover = Color.FromArgb(43, 47, 56);
+    public static Color Bg { get; private set; } = Color.FromArgb(16, 17, 20);
+    public static Color PanelBg { get; private set; } = Color.FromArgb(24, 26, 31);
+    public static Color RowBg { get; private set; } = Color.FromArgb(33, 36, 43);
+    public static Color RowHover { get; private set; } = Color.FromArgb(43, 47, 56);
     /// <summary>Accent color for the whole UI. Mutable so the user can re-theme at
     /// runtime; <see cref="AccentDim"/> is derived from it.</summary>
     public static Color Accent { get; private set; } = Color.FromArgb(0, 200, 170);
@@ -17,13 +17,21 @@ public static class Theme
     /// <summary>Re-themes the UI. Callers should repaint open windows afterwards.</summary>
     public static void SetAccent(Color c)
     {
+        _accentSpec = c;
         Accent = c;
         AccentDim = Color.FromArgb((int)(c.R * 0.55), (int)(c.G * 0.55), (int)(c.B * 0.55));
+        if (Classic)
+        {
+            // A Win95 program had no accent colour to choose: selection navy is the only one.
+            Accent = ClassicNavy;
+            AccentDim = Color.FromArgb(0, 0, 80);
+        }
+        Revision++;
     }
-    public static readonly Color TextCol = Color.FromArgb(232, 234, 238);
-    public static readonly Color Subtle = Color.FromArgb(138, 144, 155);
-    public static readonly Color Border = Color.FromArgb(52, 56, 66);
-    public static readonly Color ErrorCol = Color.FromArgb(255, 120, 110);
+    public static Color TextCol { get; private set; } = Color.FromArgb(232, 234, 238);
+    public static Color Subtle { get; private set; } = Color.FromArgb(138, 144, 155);
+    public static Color Border { get; private set; } = Color.FromArgb(52, 56, 66);
+    public static Color ErrorCol { get; private set; } = Color.FromArgb(255, 120, 110);
 
     // ---- typography: Segoe UI Variable (the Windows 11 system font) when installed ----
     // Bold requests map to the true Semibold optical instance (the Win11 emphasis
@@ -48,10 +56,12 @@ public static class Theme
     }
 
     /// <summary>Body/UI font (Segoe UI Variable Text, falling back to Segoe UI).</summary>
-    public static Font UiFont(float size, FontStyle style = FontStyle.Regular) =>
-        style.HasFlag(FontStyle.Bold) && TextSemibold != null
+    public static Font UiFont(float size, FontStyle style = FontStyle.Regular) => Track(
+        Classic ? new Font(ClassicFamily, ClassicSize(size), style)
+        : style.HasFlag(FontStyle.Bold) && TextSemibold != null
             ? new Font(TextSemibold, size, style & ~FontStyle.Bold)
-            : new Font(TextFamily, size, style);
+            : new Font(TextFamily, size, style),
+        size, style, display: false);
 
     /// <summary>Cached shared UI font for OnPaint paths — NEVER dispose the result. A fresh
     /// Font per paint holds a native GDI+ handle until finalization, and a hue-bar drag
@@ -60,17 +70,19 @@ public static class Theme
     /// immutable, families are resolved once at startup, and TextRenderer takes no ownership.</summary>
     public static Font UiFontShared(float size, FontStyle style = FontStyle.Regular)
     {
-        if (!s_fontCache.TryGetValue((size, style), out var f))
-            s_fontCache[(size, style)] = f = UiFont(size, style);
+        if (!s_fontCache.TryGetValue((size, style, Classic), out var f))
+            s_fontCache[(size, style, Classic)] = f = UiFont(size, style);
         return f;
     }
-    private static readonly Dictionary<(float, FontStyle), Font> s_fontCache = new();
+    private static readonly Dictionary<(float, FontStyle, bool), Font> s_fontCache = new();
 
     /// <summary>Large-size font for titles (Segoe UI Variable Display).</summary>
-    public static Font DisplayFont(float size, FontStyle style = FontStyle.Regular) =>
-        style.HasFlag(FontStyle.Bold) && DisplaySemibold != null
+    public static Font DisplayFont(float size, FontStyle style = FontStyle.Regular) => Track(
+        Classic ? new Font(ClassicFamily, ClassicSize(size), style)
+        : style.HasFlag(FontStyle.Bold) && DisplaySemibold != null
             ? new Font(DisplaySemibold, size, style & ~FontStyle.Bold)
-            : new Font(DisplayFamily, size, style);
+            : new Font(DisplayFamily, size, style),
+        size, style, display: true);
 
     /// <summary>Icon-font glyph font; size is the glyph's em size in points.</summary>
     public static Font IconFont(float size) => new(IconFontName ?? TextFamily, size);
@@ -78,6 +90,13 @@ public static class Theme
     public static GraphicsPath RoundedRect(Rectangle r, int radius)
     {
         var path = new GraphicsPath();
+        if (Classic) radius = 0;   // 1995 had no rounded corners: squares every call site at once
+        if (radius <= 0 || r.Width <= 0 || r.Height <= 0)
+        {
+            // Classic squares every corner; AddArc with a zero-sized box throws in GDI+.
+            path.AddRectangle(r);
+            return path;
+        }
         int d = radius * 2;
         path.AddArc(r.X, r.Y, d, d, 180, 90);
         path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
@@ -326,6 +345,7 @@ public class SleekSlider : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
+        if (Theme.Classic) { PaintClassic(g); return; }
         g.SmoothingMode = SmoothingMode.AntiAlias;
         const int pad = 9;
         int cy = Height / 2;
@@ -364,6 +384,44 @@ public class SleekSlider : Control
             : _dragging ? Theme.Accent : Theme.PanelBg;
         using (var thumbInner = new SolidBrush(inner))
             g.FillEllipse(thumbInner, tx - 5, cy - 5, 10, 10);
+    }
+
+    /// <summary>The 1995 trackbar: a thin SUNKEN channel with a raised rectangular thumb riding it.
+    /// A hue slider keeps its spectrum inside the channel - the colour is the control's whole point -
+    /// but squared off and edged like any other inset of the era.</summary>
+    private void PaintClassic(Graphics g)
+    {
+        g.SmoothingMode = SmoothingMode.None;
+        const int pad = 9;
+        int cy = Height / 2;
+        int trackW = Width - pad * 2;
+        if (trackW <= 0) return;
+        double frac = (Value - Minimum) / (double)(Maximum - Minimum);
+        int fillW = (int)(trackW * frac);
+
+        var channel = new Rectangle(pad, cy - 3, trackW, 6);
+        if (RainbowTrack)
+        {
+            using var spectrum = new LinearGradientBrush(channel, Color.Red, Color.Red, 0f);
+            spectrum.InterpolationColors = new ColorBlend
+            {
+                Colors = new[] { Color.Red, Color.Yellow, Color.Lime, Color.Cyan, Color.Blue, Color.Magenta, Color.Red },
+                Positions = new[] { 0f, 1f / 6, 2f / 6, 3f / 6, 4f / 6, 5f / 6, 1f }
+            };
+            g.FillRectangle(spectrum, channel);
+        }
+        else
+        {
+            using (var bed = new SolidBrush(Theme.FaceShadow)) g.FillRectangle(bed, channel);
+            if (fillW > 0)
+                using (var done = new SolidBrush(Theme.ClassicNavy))
+                    g.FillRectangle(done, new Rectangle(channel.X, channel.Y, fillW, channel.Height));
+        }
+        Theme.Bevel(g, channel, raised: false, thin: true);
+
+        var thumb = new Rectangle(pad + fillW - 5, cy - 9, 11, 19);
+        using (var face = new SolidBrush(Theme.Face)) g.FillRectangle(face, thumb);
+        Theme.Bevel(g, thumb, raised: true);
     }
 
     private void SetFromMouse(int x)
@@ -421,6 +479,18 @@ public class ToggleRow : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
+        if (Theme.Classic)
+        {
+            // A 95 check box sat straight on the dialog face - no row plate, no hover.
+            g.SmoothingMode = SmoothingMode.None;
+            g.TextRenderingHint = Theme.TextHint;
+            using (var face = new SolidBrush(Theme.Face)) g.FillRectangle(face, ClientRectangle);
+            Theme.ClassicCheck(g, new Rectangle(12, Height / 2 - 6, 13, 13), Checked, Enabled);
+            TextRenderer.DrawText(g, Text, Theme.UiFontShared(9.5f), new Rectangle(34, 0, Width - 40, Height),
+                Enabled ? Color.Black : Theme.FaceShadow,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            return;
+        }
         g.SmoothingMode = SmoothingMode.AntiAlias;
         using (var bg = new SolidBrush(_hover ? Theme.RowHover : Theme.RowBg))
         using (var bgPath = Theme.RoundedRect(new Rectangle(0, 0, Width - 1, Height - 1), 8))
@@ -473,6 +543,9 @@ public class RoundedButton : Control
     /// it dead-center as a vector path. Font cell metrics (what TextRenderer centers
     /// on) sit icon-font glyphs visibly off-center.</summary>
     public bool IconGlyph { get; set; }
+    /// <summary>Classic: draw as a LATCHED toolbar button - held down over the 50% dither a
+    /// checked button wore. Set by the owner for "this is the selected one" buttons.</summary>
+    public bool Latched { get; set; }
 
     public RoundedButton()
     {
@@ -487,6 +560,7 @@ public class RoundedButton : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
+        if (Theme.Classic) { PaintClassic(g); return; }
         g.SmoothingMode = SmoothingMode.AntiAlias;
         var rect = new Rectangle(0, 0, Width - 1, Height - 1);
 
@@ -522,6 +596,53 @@ public class RoundedButton : Control
         // caption ~2px left of true centre (plainest on narrow pills like "8" / "16").
         TextRenderer.DrawText(g, Text, Font, rect, textCol,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
+    }
+
+    /// <summary>The Windows 95 button: a raised face that goes sunken while held, its label
+    /// stepping down-right with it. A colour well (a swatch, where hover == fill) keeps its own
+    /// colour and wears a sunken edge instead. A latched button - the selected effect - stays
+    /// pressed over the 50% dither a checked toolbar button wore.</summary>
+    private void PaintClassic(Graphics g)
+    {
+        g.SmoothingMode = SmoothingMode.None;
+        g.TextRenderingHint = Theme.TextHint;
+        var full = new Rectangle(0, 0, Width, Height);
+        bool isWell = string.IsNullOrEmpty(Text) && HoverFillColor.ToArgb() == FillColor.ToArgb();
+
+        if (isWell)
+        {
+            using (var b = new SolidBrush(Enabled ? FillColor : Theme.Face)) g.FillRectangle(b, full);
+            Theme.Bevel(g, full, raised: false);
+            return;
+        }
+
+        bool latched = Latched;
+        bool down = latched || (Interactive && _pressed);
+
+        if (latched)
+        {
+            using var hatch = new System.Drawing.Drawing2D.HatchBrush(
+                System.Drawing.Drawing2D.HatchStyle.Percent50, Theme.FaceHi, Theme.Face);
+            g.FillRectangle(hatch, full);
+        }
+        else using (var b = new SolidBrush(Theme.Face)) g.FillRectangle(b, full);
+
+        Theme.Bevel(g, full, raised: !down);
+
+        if (string.IsNullOrEmpty(Text)) return;
+        var tr = full;
+        if (down) tr.Offset(1, 1);
+        const TextFormatFlags flags = TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
+                                      TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding;
+        if (!Enabled)
+        {
+            // 1995 embossed a disabled label: a white ghost down-right, grey on top.
+            var sh = tr; sh.Offset(1, 1);
+            TextRenderer.DrawText(g, Text, Font, sh, Theme.FaceHi, flags);
+            TextRenderer.DrawText(g, Text, Font, tr, Theme.FaceShadow, flags);
+            return;
+        }
+        TextRenderer.DrawText(g, Text, Font, tr, Color.Black, flags);
     }
 
     protected override void OnEnabledChanged(EventArgs e)
@@ -576,7 +697,7 @@ public sealed class RainbowTitle : Control
     protected override void OnVisibleChanged(EventArgs e)
     {
         base.OnVisibleChanged(e);
-        if (Visible) _t.Start(); else _t.Stop();
+        if (Visible && !Theme.Classic) _t.Start(); else _t.Stop();
     }
     protected override void OnHandleCreated(EventArgs e)
     {
@@ -584,7 +705,7 @@ public sealed class RainbowTitle : Control
         // Size the control NOW (a 0x0 control never gets an OnPaint, so the lazy
         // size-in-paint would leave the wordmark invisible).
         using (var g = CreateGraphics()) BuildPaths(g.DpiY);
-        if (Visible) _t.Start();
+        if (Visible && !Theme.Classic) _t.Start();
     }
 
     private void BuildPaths(float dpiY)
@@ -618,6 +739,16 @@ public sealed class RainbowTitle : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
+        if (Theme.Classic)
+        {
+            // A title bar carried flat white bold text. No glow, no per-letter hues, no curves.
+            g.SmoothingMode = SmoothingMode.None;
+            g.TextRenderingHint = Theme.TextHint;
+            TextRenderer.DrawText(g, Word, Theme.UiFontShared(9f, FontStyle.Bold),
+                new Rectangle(4, 0, Width - 8, Height), Color.White,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+            return;
+        }
         g.SmoothingMode = SmoothingMode.AntiAlias;
         if (_glyphs == null || _whole == null || _dpi != g.DpiY) BuildPaths(g.DpiY);
 
@@ -712,11 +843,13 @@ public class DeviceRow : Control
         const int Line1 = 7, Line2 = 24;
 
         var g = e.Graphics;
-        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.SmoothingMode = Theme.ShapeMode;
+        g.TextRenderingHint = Theme.TextHint;
+        bool sel = Theme.Classic && Targeted;   // a selected list item: navy band, white text
         var outer = Theme.RoundedRect(new Rectangle(0, 0, Width - 1, Height - 1), 8);
-        using (var bg = new SolidBrush(_hover ? Theme.RowHover : Theme.RowBg))
+        using (var bg = new SolidBrush(sel ? Theme.ClassicNavy : _hover ? Theme.RowHover : Theme.RowBg))
             g.FillPath(bg, outer);
-        if (Targeted)
+        if (Targeted && !Theme.Classic)
             using (var hl = new Pen(Theme.Accent, 1.6f))
                 g.DrawPath(hl, outer);
         outer.Dispose();
@@ -725,7 +858,11 @@ public class DeviceRow : Control
         // colour swatch alongside the square DisplayColor chip on the right — the two used to
         // look like duplicate green controls whenever the lighting colour was green.
         var box = new Rectangle(Pad, Height / 2 - 9, 18, 18);
-        if (Checked)
+        if (Theme.Classic)
+        {
+            Theme.ClassicCheck(g, new Rectangle(Pad + 2, Height / 2 - 6, 13, 13), Checked);
+        }
+        else if (Checked)
         {
             using var fill = new SolidBrush(Theme.Accent);
             g.FillEllipse(fill, box);
@@ -744,14 +881,25 @@ public class DeviceRow : Control
         if (!string.IsNullOrEmpty(Device.Kind))
         {
             var badge = new Rectangle(rightEdge - BadgeW, Line1 + 1, BadgeW, 16);
-            using var pen = new Pen(Theme.Border, 1f);
-            using var badgePath = Theme.RoundedRect(badge, 7);
-            g.DrawPath(pen, badgePath);
-            TextRenderer.DrawText(g, Device.Kind, Theme.UiFontShared(7f, FontStyle.Bold), badge, Theme.Subtle,
+            if (Theme.Classic) Theme.Bevel(g, badge, raised: false, thin: true);
+            else
+            {
+                using var pen = new Pen(Theme.Border, 1f);
+                using var badgePath = Theme.RoundedRect(badge, 7);
+                g.DrawPath(pen, badgePath);
+            }
+            TextRenderer.DrawText(g, Device.Kind, Theme.UiFontShared(7f, FontStyle.Bold), badge,
+                sel ? Color.White : Theme.Subtle,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
         }
         var chip = new Rectangle(rightEdge - (BadgeW + ChipW) / 2, Line2 + 1, ChipW, ChipH);
-        using (var chipPath = Theme.RoundedRect(chip, 4))
+        if (Theme.Classic)
+        {
+            using (var chipFill = new SolidBrush(Checked ? DisplayColor : Theme.Blend(DisplayColor, Theme.Face, 0.6)))
+                g.FillRectangle(chipFill, chip);
+            Theme.Bevel(g, chip, raised: false, thin: true);
+        }
+        else using (var chipPath = Theme.RoundedRect(chip, 4))
         {
             using (var chipFill = new SolidBrush(Checked ? DisplayColor : Theme.Blend(DisplayColor, Theme.RowBg, 0.6)))
                 g.FillPath(chipFill, chipPath);
@@ -762,7 +910,7 @@ public class DeviceRow : Control
         // text column: name + sub-line share one right limit (the rail)
         int railW = BadgeW + Gutter;
         int textW = Width - NameX - Pad - railW;
-        var nameCol = Checked ? Theme.TextCol : Theme.Subtle;
+        var nameCol = sel ? Color.White : Checked ? Theme.TextCol : Theme.Subtle;
         TextRenderer.DrawText(g, Device.Name, Theme.UiFontShared(9.5f, FontStyle.Bold),
             new Rectangle(NameX, Line1, textW, 20), nameCol,
             TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.Top);
@@ -771,7 +919,8 @@ public class DeviceRow : Control
         string sub = Device.LedCount == 1 ? "1 zone" : $"{Device.LedCount} zones";
         if (EffectNote != null) sub += $"  ·  ✦ {EffectNote}";
         TextRenderer.DrawText(g, sub, Theme.UiFontShared(8f),
-            new Rectangle(NameX, Line2, textW, 16), EffectNote != null ? Theme.Accent : Theme.Subtle,
+            new Rectangle(NameX, Line2, textW, 16),
+            sel ? Color.White : EffectNote != null ? Theme.Accent : Theme.Subtle,
             TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.Top);
     }
 
@@ -840,14 +989,26 @@ public class DeviceGroupRow : Control
     {
         const int Pad = 12, ChipW = 18, ChipH = 14, BadgeW = 56, NameX = 40, Line1 = 7, Line2 = 24;
         var g = e.Graphics;
-        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.SmoothingMode = Theme.ShapeMode;
+        g.TextRenderingHint = Theme.TextHint;
         using (var outer = Theme.RoundedRect(new Rectangle(0, 0, Width - 1, Height - 1), 8))
         using (var bg = new SolidBrush(_hover ? Theme.RowHover : Theme.RowBg))
             g.FillPath(bg, outer);
 
         // shared enable circle: filled = all on, dash = mixed, hollow = all off
         var box = new Rectangle(Pad, Height / 2 - 9, 18, 18);
-        if (AllChecked)
+        if (Theme.Classic)
+        {
+            // 1995's three-state box: ticked, or a tick on a grey well for "some of them".
+            var cb = new Rectangle(Pad + 2, Height / 2 - 6, 13, 13);
+            if (AnyChecked && !AllChecked)
+            {
+                Theme.ClassicField(g, cb, Theme.Face);
+                Theme.ClassicCheck(g, cb, true, enabled: false);
+            }
+            else Theme.ClassicCheck(g, cb, AllChecked);
+        }
+        else if (AllChecked)
         {
             using var fill = new SolidBrush(Theme.Accent);
             g.FillEllipse(fill, box);
@@ -1010,6 +1171,7 @@ public static class Backdrop
     /// <summary>Draws this control's slice of the window backdrop.</summary>
     public static void Paint(Graphics g, Control c)
     {
+        if (Theme.Classic) { g.Clear(Theme.Face); return; }
         var form = c.FindForm();
         if (form == null || form.ClientSize.Width < 1 || form.ClientSize.Height < 1)
         {
@@ -1115,8 +1277,10 @@ public class GradientPanel : Panel
 /// Do NOT move the painting to OnPaint.</summary>
 public class CardPanel : Panel
 {
-    private static readonly Font TitleFont = Theme.UiFont(9f, FontStyle.Bold);
     public string? Title { get; set; }
+    /// <summary>Classic only: paint this card as a window TITLE BAR (the navy caption gradient)
+    /// rather than a group box. Set on the header card, which is where the app's chrome lives.</summary>
+    public bool CaptionStyle { get; set; }
     public int CornerRadius { get; set; } = 10;
     /// <summary>Translucent cards let the window gradient glow through ("smoked glass");
     /// turn off for cards hosting opaque scrollable children (the device list).</summary>
@@ -1133,6 +1297,7 @@ public class CardPanel : Panel
     protected override void OnPaintBackground(PaintEventArgs e)
     {
         var g = e.Graphics;
+        if (Theme.Classic) { PaintClassic(g); return; }
         Backdrop.Paint(g, this);                         // corner pixels = the window gradient
         g.SmoothingMode = SmoothingMode.AntiAlias;
         using var path = Theme.RoundedRect(new Rectangle(0, 0, Width - 1, Height - 1), CornerRadius);
@@ -1141,8 +1306,39 @@ public class CardPanel : Panel
         using var pen = new Pen(Theme.Border);
         g.DrawPath(pen, path);
         if (!string.IsNullOrEmpty(Title))
-            TextRenderer.DrawText(g, Title, TitleFont, new Point(14, 12), Theme.Accent,
+            TextRenderer.DrawText(g, Title, Theme.UiFontShared(9f, FontStyle.Bold), new Point(14, 12), Theme.Accent,
                 TextFormatFlags.NoPrefix); // Accent read per paint, so SetAccent re-themes it
+    }
+
+    /// <summary>The 1995 group box: a flat window face inside an ETCHED frame (a thin sunken ring),
+    /// with the caption sitting ON the top line over a gap cut in it.</summary>
+    private void PaintClassic(Graphics g)
+    {
+        g.SmoothingMode = SmoothingMode.None;
+        g.TextRenderingHint = Theme.TextHint;
+        using (var face = new SolidBrush(Theme.Face)) g.FillRectangle(face, ClientRectangle);
+
+        if (CaptionStyle)
+        {
+            // A 95 window: the raised face of the frame, with the caption band inset in it.
+            Theme.Bevel(g, new Rectangle(0, 0, Width, Height), raised: true);
+            Theme.ClassicCaption(g, new Rectangle(3, 3, Width - 6, 26));   // covers the wordmark + version row
+            return;
+        }
+
+        var font = Theme.UiFontShared(9f);
+        int top = string.IsNullOrEmpty(Title) ? 0 : font.Height / 2;
+        var frame = new Rectangle(0, top, Width - 1, Height - top - 1);
+        Theme.Bevel(g, frame, raised: false, thin: true);
+
+        if (string.IsNullOrEmpty(Title)) return;
+        var size = TextRenderer.MeasureText(g, Title, font, new Size(int.MaxValue, int.MaxValue),
+            TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
+        // cut the frame line so the caption sits in the gap, the way a group box did
+        using (var face = new SolidBrush(Theme.Face))
+            g.FillRectangle(face, 10, frame.Top, size.Width + 8, 2);
+        TextRenderer.DrawText(g, Title, font, new Point(13, 0), Color.Black,
+            TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
     }
 }
 
@@ -1180,10 +1376,11 @@ public class LivePreview : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
-        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.SmoothingMode = Theme.ShapeMode;
         var rect = new Rectangle(0, 0, Width - 1, Height - 1);
-        using var clip = Theme.RoundedRect(rect, 8);
-        using (var bg = new SolidBrush(Theme.RowBg)) g.FillPath(bg, clip);
+        if (Theme.Classic) Theme.Bevel(g, new Rectangle(0, 0, Width, Height), raised: false);
+        using var clip = Theme.RoundedRect(Theme.Classic ? Rectangle.Inflate(rect, -2, -2) : rect, 8);
+        using (var bg = new SolidBrush(Theme.Classic ? Color.Black : Theme.RowBg)) g.FillPath(bg, clip);
 
         int n = _colors.Length;
         if (n > 0 && Width > 0)

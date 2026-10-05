@@ -9,6 +9,11 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        // The skin FIRST: it decides what the palette, the radii and the typeface even are, and
+        // MainForm's field initialisers read those while constructing controls. Every visual test
+        // harness below inherits it too, so a Classic screenshot needs no extra plumbing.
+        Theme.SetSkin(ResolveClassicSkin());
+
         if (args.Contains("--test"))
         {
             RunHeadlessTest();
@@ -38,6 +43,12 @@ internal static class Program
             // clocks, power, load, fan-control caps) -> gpu-sensors.txt next to the exe.
             // Writes nothing to the card. Feeds the GPU Guardian design.
             GpuSensorDiag.Run();
+            return;
+        }
+        if (args.Contains("--test-skin"))
+        {
+            // Design harness for both looks: the real controls, no mutex, no hardware.
+            SkinPreview.Run();
             return;
         }
         if (args.Contains("--test-picker"))
@@ -163,6 +174,16 @@ internal static class Program
     /// 3 seconds (a visible change if hardware writes work), then static red, then
     /// re-reads the device state. Output: gpu-diag.txt next to the exe.
     /// </summary>
+    /// <summary>Which skin to start in. PRISMA_CLASSIC=1|0 overrides the saved setting, which is what
+    /// the screenshot harnesses use so neither look needs the app's own settings touched.</summary>
+    private static bool ResolveClassicSkin()
+    {
+        string? env = Environment.GetEnvironmentVariable("PRISMA_CLASSIC");
+        if (env == "1") return true;
+        if (env == "0") return false;
+        try { return AppSettings.Load().ClassicSkin; } catch { return false; }
+    }
+
     private static void RunGpuDiagnostic()
     {
         var log = new StringBuilder();
