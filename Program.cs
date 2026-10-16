@@ -12,6 +12,11 @@ internal static class Program
         // The skin FIRST: it decides what the palette, the radii and the typeface even are, and
         // MainForm's field initialisers read those while constructing controls. Every visual test
         // harness below inherits it too, so a Classic screenshot needs no extra plumbing.
+        // FIRST, before anything reads settings: a harness must never write to (or rename) Erik's
+        // live settings.json. LoadRaw renames an unreadable file to .bad, and a harness read can race
+        // the live instance's atomic File.Replace - so a harness must not take that branch either.
+        AppSettings.ReadOnly = args.Any(a => a.StartsWith("--test", StringComparison.Ordinal));
+        if (AppSettings.ReadOnly) DebugLog.UseHarnessLog();
         Theme.SetSkin(ResolveClassicSkin());
 
         if (args.Contains("--test"))

@@ -77,7 +77,7 @@ public class MainForm : Form
         if (_settings != null) Acrylic.Apply(this, _settings.GlassEffect);
         if (_settings != null) ApplyHotkeys();
         if (_powerNotify == IntPtr.Zero)
-            _powerNotify = RegisterPowerSettingNotification(Handle, ref s_displayStateGuid, 0);
+            if (!Harness) _powerNotify = RegisterPowerSettingNotification(Handle, ref s_displayStateGuid, 0);
     }
 
     // The side margins that appear once the content block is width-capped (maximized
@@ -224,6 +224,11 @@ public class MainForm : Form
             _settings.CloseToTray = false;
             _settings.GlobalHotkeys = false;
             _settings.WarnOnRgbConflicts = false;
+            // Renders must be deterministic: an idle desk at night would otherwise black the
+            // preview out mid-capture (RenderFrame returns before the preview is fed).
+            _settings.NightOffEnabled = _settings.IdleOffEnabled = false;
+            _settings.OffWhenLocked = _settings.OffWhenSleeps = _settings.OffWhenDisplaySleeps = false;
+            _settings.GlassEffect = Environment.GetEnvironmentVariable("PRISMA_HARNESS_GLASS") == "1";
         }
         if (Enum.TryParse(_settings.Effect, out Effect savedEffect)) _effect = savedEffect;
         _currentColor = Color.FromArgb(_settings.ColorArgb);
@@ -310,8 +315,11 @@ public class MainForm : Form
         _gpuExternalApplied = _settings.GpuExternalControl;
         _ignoreLogitechApplied = _settings.IgnoreLogitechMouse;
         // Optional: drop all lighting while the session is locked or the machine sleeps.
-        SystemEvents.SessionSwitch += OnSessionSwitch;
-        SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        if (!Harness)
+        {
+            SystemEvents.SessionSwitch += OnSessionSwitch;
+            SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        }
         Shown += async (_, _) =>
         {
             if (_startMinimized)

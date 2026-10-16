@@ -6,6 +6,12 @@ namespace RGBCommander;
 
 public class SettingsForm : Form
 {
+    /// <summary>Set by the design harnesses. These buttons act on the machine rather than on
+    /// settings.json (the Run key, the shared OpenRGB server, other vendors' services), so in a
+    /// harness they only say so - a screenshot run must never restart the server the live instance
+    /// is streaming through, or point autostart at the harness exe.</summary>
+    internal static bool SystemActionsDisabled => AppSettings.ReadOnly;
+
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
@@ -517,6 +523,7 @@ public class SettingsForm : Form
         _conflictFixBtn = new RoundedButton { Text = "Disable conflicting software", Left = 0, Top = 214, Width = 220, Height = 38 };
         _conflictFixBtn.Click += (_, _) =>
         {
+            if (SystemActionsDisabled) { _conflictStatus.Text = "Disabled in the design harness."; return; }
             var active = RgbConflicts.Scan();
             if (active.Count == 0) { RefreshConflictStatus(); return; }
             _conflictFixBtn.Enabled = false;
@@ -579,6 +586,7 @@ public class SettingsForm : Form
             // busy, or contention with a vendor app like Sapphire TRIXX); a fresh
             // detection brings it back. A plain /run while a server is already running
             // just spawns duplicate instances that fight over the bus and fix nothing.
+            if (SystemActionsDisabled) { _maintenanceStatus.Text = "Disabled in the design harness."; return; }
             restartBtn.Enabled = false;
             _maintenanceStatus.Text = "Restarting OpenRGB server (re-detecting hardware)...";
             try
@@ -802,6 +810,7 @@ public class SettingsForm : Form
 
     private static void WriteStartupEntry(bool enabled, bool minimized)
     {
+        if (SystemActionsDisabled) return;   // would point autostart at the harness exe
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true);

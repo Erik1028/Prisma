@@ -147,7 +147,7 @@ public class AppSettings
             try
             {
                 string bad = path + ".bad";
-                if (File.Exists(path) && !File.Exists(bad)) File.Move(path, bad);
+                if (!ReadOnly && File.Exists(path) && !File.Exists(bad)) File.Move(path, bad);
             }
             catch { }
             DebugLog.Log("settings load failed (kept as .bad): " + ex.Message);
