@@ -155,8 +155,13 @@ public class AppSettings
         return new AppSettings();
     }
 
+    /// <summary>Set by the design harnesses: settings are read from Erik's real file but never written
+    /// back, so a screenshot run cannot change the live instance's profile, colours or window bounds.</summary>
+    public static bool ReadOnly;
+
     public void Save()
     {
+        if (ReadOnly) return;
         try
         {
             // Atomic: write a temp file, then swap it in, so a crash/power loss

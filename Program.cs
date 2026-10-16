@@ -45,6 +45,11 @@ internal static class Program
             GpuSensorDiag.Run();
             return;
         }
+        if (args.Contains("--test-main"))
+        {
+            RunMainHarness(args);
+            return;
+        }
         if (args.Contains("--test-skin"))
         {
             // Design harness for both looks: the real controls, no mutex, no hardware.
@@ -174,6 +179,43 @@ internal static class Program
     /// 3 seconds (a visible change if hardware writes work), then static red, then
     /// re-reads the device state. Output: gpu-diag.txt next to the exe.
     /// </summary>
+    /// <summary>
+    /// <c>--test-main [remote args...]</c>: the REAL main window on pretend hardware, for design work and
+    /// screenshots. Runs beside the live instance (no mutex), never writes settings, never touches devices.
+    /// Anything after the flag is applied once the window is up, exactly like a forwarded remote command
+    /// (e.g. <c>--test-main --effect rainbow</c>). PRISMA_HARNESS_VISIBLE=1 shows it normally;
+    /// PRISMA_HARNESS_SIZE=WxH overrides the client size; PRISMA_CLASSIC=1 starts in the Windows 95 skin.
+    /// </summary>
+    private static void RunMainHarness(string[] args)
+    {
+        AppSettings.ReadOnly = true;
+        MainForm.Harness = true;
+        MainForm.HarnessGhost = Environment.GetEnvironmentVariable("PRISMA_HARNESS_VISIBLE") != "1";
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        Application.SetHighDpiMode(HighDpiMode.SystemAware);
+
+        var form = new MainForm(startMinimized: false);
+        string? size = Environment.GetEnvironmentVariable("PRISMA_HARNESS_SIZE");
+        if (size != null)
+        {
+            var p = size.ToLowerInvariant().Split('x');
+            if (p.Length == 2 && int.TryParse(p[0], out int w) && int.TryParse(p[1], out int h))
+            {
+                form.WindowState = FormWindowState.Normal;
+                form.ClientSize = new Size(w, h);
+            }
+        }
+        var extra = args.SkipWhile(a => a != "--test-main").Skip(1).ToArray();
+        if (extra.Length > 0)
+            form.Shown += async (_, _) =>
+            {
+                await Task.Delay(1200);   // the pretend detect finishes synchronously; let layout settle
+                form.HandleRemoteCommand(string.Join(RemoteControl.Sep, extra));
+            };
+        Application.Run(form);
+    }
+
     /// <summary>Which skin to start in. PRISMA_CLASSIC=1|0 overrides the saved setting, which is what
     /// the screenshot harnesses use so neither look needs the app's own settings touched.</summary>
     private static bool ResolveClassicSkin()

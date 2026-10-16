@@ -194,10 +194,37 @@ public class MainForm : Form
     private string? _deviceFault;                   // a wedged/unresponsive device, surfaced once
     private bool _conflictWarned;                   // contending RGB software balloon shown this session
 
+    /// <summary><c>--test-main</c>: build the real window on pretend hardware (HarnessRig) with no hotkeys,
+    /// no watchdog, no tray icon and read-only settings. See Program.RunMainHarness.</summary>
+    internal static bool Harness;
+    /// <summary>Harness window drawn at 2% opacity, click-through and never activated, so a screenshot run
+    /// cannot catch a real click or drag while Erik works (PrintWindow still captures it in full).</summary>
+    internal static bool HarnessGhost;
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var cp = base.CreateParams;
+            if (Harness && HarnessGhost)
+                cp.ExStyle |= 0x20 /*WS_EX_TRANSPARENT*/ | 0x80 /*WS_EX_TOOLWINDOW*/ | 0x08000000 /*WS_EX_NOACTIVATE*/;
+            return cp;
+        }
+    }
+    protected override bool ShowWithoutActivation => Harness && HarnessGhost;
+
     public MainForm(bool startMinimized = false)
     {
         _startMinimized = startMinimized;
         _settings = AppSettings.Load();
+        if (Harness)
+        {
+            // In memory only (Save is a no-op in harness mode): no tray hide, no global hotkeys
+            // fighting the live instance, no conflict balloon, no start-hidden.
+            _settings.CloseToTray = false;
+            _settings.GlobalHotkeys = false;
+            _settings.WarnOnRgbConflicts = false;
+        }
         if (Enum.TryParse(_settings.Effect, out Effect savedEffect)) _effect = savedEffect;
         _currentColor = Color.FromArgb(_settings.ColorArgb);
         _saveTimer.Tick += (_, _) => { _saveTimer.Stop(); SaveNow(); };
@@ -278,7 +305,7 @@ public class MainForm : Form
             }
             CheckProfileTriggers();
         };
-        _watchdog.Start();
+        if (!Harness) _watchdog.Start();   // nothing to reconnect on pretend hardware
         SyncEffectTuning();
         _gpuExternalApplied = _settings.GpuExternalControl;
         _ignoreLogitechApplied = _settings.IgnoreLogitechMouse;
@@ -1512,6 +1539,7 @@ public class MainForm : Form
     /// <summary>The opacity slider is suspended while liquid glass is on: a layered
     /// (semi-transparent) window breaks the DWM acrylic accent rendering.</summary>
     private double EffectiveOpacity() =>
+        Harness && HarnessGhost ? 0.02 :
         _settings.GlassEffect ? 1.0 : Math.Clamp(_settings.WindowOpacity, 75, 100) / 100.0;
 
     private void ApplySettingsChanged()
@@ -1617,7 +1645,7 @@ public class MainForm : Form
         {
             Icon = trayIcon ?? SystemIcons.Application,
             Text = "Prisma",
-            Visible = true,
+            Visible = !Harness,   // the live instance already owns the tray
             ContextMenuStrip = menu
         };
         _tray.DoubleClick += (_, _) => RestoreFromTray();
@@ -2392,7 +2420,8 @@ public class MainForm : Form
 
         var progress = new Progress<string>(s => SetStatus(s, error: false));
         DeviceManager.DetectionResult result = null!;
-        await Task.Run(() =>
+        if (Harness) result = HarnessRig.Detect();   // never touch HID / ADL / SMBus / OpenRGB
+        else await Task.Run(() =>
         {
             var report = (IProgress<string>)progress;
             bool skipMouse = _settings.IgnoreLogitechMouse;
