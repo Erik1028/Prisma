@@ -29,6 +29,10 @@ internal static class HarnessRig
         r.Devices.Add(new Device("AMD Radeon RX 9060 XT", 1, "Native ADL", "GPU"));
         for (int i = 0; i < 4; i++) r.Devices.Add(new Device("ENE DRAM", 5, "OpenRGB", "RAM"));
         r.Devices.Add(new Device("ASUS ROG STRIX B550-F GAMING", 5, "OpenRGB", "MB"));
+        // PRISMA_HARNESS_EXTRA=n: n more (distinct) devices, so the rail's lists must scroll
+        if (int.TryParse(Environment.GetEnvironmentVariable("PRISMA_HARNESS_EXTRA"), out int extra))
+            for (int i = 0; i < Math.Clamp(extra, 0, 40); i++)
+                r.Devices.Add(new Device($"Test LED strip {i + 1}", 30, "OpenRGB", "USB"));
         return r;
     }
 }

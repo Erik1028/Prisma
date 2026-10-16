@@ -121,7 +121,7 @@ public sealed class AboutPopup : Form
                 g.FillPath(brush, wordPath);
             }
             int vx = PAD + (int)Math.Ceiling(b.Width) + 8;
-            TextRenderer.DrawText(g, "v" + _i.Version, Theme.UiFont(8.5f), new Point(vx, y + 8), Theme.Subtle, TextFormatFlags.NoPrefix);
+            CrispText.DrawText(g, "v" + _i.Version, Theme.UiFont(8.5f), new Point(vx, y + 8), Theme.Subtle, TextFormatFlags.NoPrefix);
         }
         y += 30;
         if (g != null)
@@ -137,12 +137,12 @@ public sealed class AboutPopup : Form
         if (g != null)
         {
             if (_i.LightsOff)
-                TextRenderer.DrawText(g, "Lights off", Theme.UiFont(10f, FontStyle.Bold), new Point(PAD, y), Theme.Subtle, TextFormatFlags.NoPrefix);
+                CrispText.DrawText(g, "Lights off", Theme.UiFont(10f, FontStyle.Bold), new Point(PAD, y), Theme.Subtle, TextFormatFlags.NoPrefix);
             else
             {
                 Dot(g, PAD + 7, y + 9, _i.CurrentColor);
-                TextRenderer.DrawText(g, _i.Effect, Theme.UiFont(10f, FontStyle.Bold), new Point(PAD + 20, y), Theme.TextCol, TextFormatFlags.NoPrefix);
-                TextRenderer.DrawText(g, _i.ColorHex, Theme.UiFont(9f), new Rectangle(PAD, y, W - 2 * PAD, 20), Theme.Subtle, TextFormatFlags.Right | TextFormatFlags.NoPrefix);
+                CrispText.DrawText(g, _i.Effect, Theme.UiFont(10f, FontStyle.Bold), new Point(PAD + 20, y), Theme.TextCol, TextFormatFlags.NoPrefix);
+                CrispText.DrawText(g, _i.ColorHex, Theme.UiFont(9f), new Rectangle(PAD, y, W - 2 * PAD, 20), Theme.Subtle, TextFormatFlags.Right | TextFormatFlags.NoPrefix);
             }
         }
         y += 26;
@@ -150,9 +150,9 @@ public sealed class AboutPopup : Form
         // ---- hero: total LEDs ----
         if (g != null)
         {
-            TextRenderer.DrawText(g, _i.TotalLeds.ToString(), Theme.DisplayFont(20f, FontStyle.Bold), new Point(PAD - 2, y), Theme.TextCol, TextFormatFlags.NoPrefix);
+            CrispText.DrawText(g, _i.TotalLeds.ToString(), Theme.DisplayFont(20f, FontStyle.Bold), new Point(PAD - 2, y), Theme.TextCol, TextFormatFlags.NoPrefix);
             int nx = PAD + TextRenderer.MeasureText(_i.TotalLeds.ToString(), Theme.DisplayFont(20f, FontStyle.Bold)).Width;
-            TextRenderer.DrawText(g, $"LEDs lit  ·  {_i.FrameRate} fps", Theme.UiFont(9f), new Point(nx, y + 12), Theme.Accent, TextFormatFlags.NoPrefix);
+            CrispText.DrawText(g, $"LEDs lit  ·  {_i.FrameRate} fps", Theme.UiFont(9f), new Point(nx, y + 12), Theme.Accent, TextFormatFlags.NoPrefix);
         }
         y += 36;
 
@@ -164,9 +164,9 @@ public sealed class AboutPopup : Form
             {
                 var name = d.On ? Theme.TextCol : Theme.Subtle;
                 Dot(g, PAD + 7, y + 9, d.On ? d.Color : Theme.Blend(d.Color, Theme.PanelBg, 0.6));
-                TextRenderer.DrawText(g, d.Name, Theme.UiFont(9f, FontStyle.Bold), new Point(PAD + 20, y), name, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+                CrispText.DrawText(g, d.Name, Theme.UiFont(9f, FontStyle.Bold), new Point(PAD + 20, y), name, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
                 Pill(g, W - PAD - 48, y + 2, 48, d.Kind, Theme.Subtle, false);
-                TextRenderer.DrawText(g, d.Sub, Theme.UiFont(7.5f), new Point(PAD + 20, y + 13), Theme.Subtle, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+                CrispText.DrawText(g, d.Sub, Theme.UiFont(7.5f), new Point(PAD + 20, y + 13), Theme.Subtle, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
             }
             y += 30;
         }
@@ -194,7 +194,7 @@ public sealed class AboutPopup : Form
         // ---- status line + special pill ----
         y += 4;
         if (g != null && !string.IsNullOrEmpty(_i.StatusText))
-            TextRenderer.DrawText(g, _i.StatusText, Theme.UiFont(8.5f), new Rectangle(PAD, y, W - 2 * PAD, 16), Theme.Subtle, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+            CrispText.DrawText(g, _i.StatusText, Theme.UiFont(8.5f), new Rectangle(PAD, y, W - 2 * PAD, 16), Theme.Subtle, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
         y += 18;
         if (_i.Special != null)
         {
@@ -211,8 +211,8 @@ public sealed class AboutPopup : Form
         y += 8;
         if (g != null)
         {
-            TextRenderer.DrawText(g, _i.BuildLine, Theme.UiFont(8f), new Rectangle(PAD, y, W - 2 * PAD, 16), Theme.Subtle, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
-            TextRenderer.DrawText(g, _i.Credit, Theme.UiFont(8f), new Rectangle(PAD, y + 16, W - 2 * PAD, 16), Theme.Accent, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+            CrispText.DrawText(g, _i.BuildLine, Theme.UiFont(8f), new Rectangle(PAD, y, W - 2 * PAD, 16), Theme.Subtle, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+            CrispText.DrawText(g, _i.Credit, Theme.UiFont(8f), new Rectangle(PAD, y + 16, W - 2 * PAD, 16), Theme.Accent, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
         }
         y += 36;
         return y;
@@ -221,7 +221,7 @@ public sealed class AboutPopup : Form
     private static int Section(Graphics? g, int y, string text)
     {
         if (g != null)
-            TextRenderer.DrawText(g, text, Theme.UiFont(8f, FontStyle.Bold), new Point(PAD, y), Theme.Accent, TextFormatFlags.NoPrefix);
+            CrispText.DrawText(g, text, Theme.UiFont(8f, FontStyle.Bold), new Point(PAD, y), Theme.Accent, TextFormatFlags.NoPrefix);
         return y + 20;
     }
 
@@ -229,8 +229,8 @@ public sealed class AboutPopup : Form
     {
         if (g != null)
         {
-            TextRenderer.DrawText(g, key, Theme.UiFont(9f), new Point(PAD, y), Theme.Subtle, TextFormatFlags.NoPrefix);
-            TextRenderer.DrawText(g, value, Theme.UiFont(9f), new Rectangle(PAD + 80, y, W - 2 * PAD - 80, 18), Theme.TextCol, TextFormatFlags.Right | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+            CrispText.DrawText(g, key, Theme.UiFont(9f), new Point(PAD, y), Theme.Subtle, TextFormatFlags.NoPrefix);
+            CrispText.DrawText(g, value, Theme.UiFont(9f), new Rectangle(PAD + 80, y, W - 2 * PAD - 80, 18), Theme.TextCol, TextFormatFlags.Right | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
         }
         return y + 20;
     }
@@ -250,6 +250,6 @@ public sealed class AboutPopup : Form
         if (tint) { using var fill = new SolidBrush(Color.FromArgb(36, c)); g.FillPath(fill, path); }
         using var pen = new Pen(Color.FromArgb(tint ? 200 : 120, c), 1f);
         g.DrawPath(pen, path);
-        TextRenderer.DrawText(g, text, Theme.UiFont(8f, FontStyle.Bold), r, c, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+        CrispText.DrawText(g, text, Theme.UiFont(8f, FontStyle.Bold), r, c, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
     }
 }

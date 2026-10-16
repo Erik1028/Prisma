@@ -30,7 +30,7 @@ public static partial class Theme
     {
         Classic = classic;
         SetRadii(classic);
-        if (classic) ApplyClassicSurfaces(); else ApplyModernSurfaces();
+        ApplySurfaces(classic);
         SetAccent(_accentSpec);   // bumps Revision
     }
 
@@ -49,41 +49,36 @@ public static partial class Theme
     /// (COLOR_WINDOW). In the modern look it is simply the row surface.</summary>
     public static Color FieldBg => Classic ? Color.White : RowBg;
 
-    private static void ApplyClassicSurfaces()
+    /// <summary>Assigns every surface/text token from the one <see cref="Surf"/> table. Classic is the
+    /// 1995 system scheme: one grey window face for all chrome, a white inset surface for lists and
+    /// fields, black text, maroon for errors.</summary>
+    private static void ApplySurfaces(bool classic)
     {
-        Bg = Face;        // the window face: pages, cards and dialogs all sit on it
-        PanelBg = Face;
-        RowBg = Color.White;                      // a list/field is white inside the grey window
-        RowHover = Color.FromArgb(230, 230, 230); // 95 lists had no hover; the faintest grey keeps the affordance
-        TextCol = Color.Black;                    // COLOR_WINDOWTEXT / BTNTEXT
-        Subtle = Color.FromArgb(56, 56, 56);
-        Border = FaceShadow;
-        ErrorCol = Color.FromArgb(128, 0, 0);     // maroon, the era's red
-    }
-
-    private static void ApplyModernSurfaces()
-    {
-        Bg = Color.FromArgb(16, 17, 20);
-        PanelBg = Color.FromArgb(24, 26, 31);
-        RowBg = Color.FromArgb(33, 36, 43);
-        RowHover = Color.FromArgb(43, 47, 56);
-        TextCol = Color.FromArgb(232, 234, 238);
-        Subtle = Color.FromArgb(138, 144, 155);
-        Border = Color.FromArgb(52, 56, 66);
-        ErrorCol = Color.FromArgb(255, 120, 110);
+        Color T(Tok t) => classic ? Surf[(int)t].Classic : Surf[(int)t].Modern;
+        Bg = T(Tok.Bg);
+        PanelBg = T(Tok.PanelBg);
+        RailBg = T(Tok.RailBg);
+        RowBg = T(Tok.RowBg);
+        RowHover = T(Tok.RowHover);
+        Border = T(Tok.Border);
+        HairLine = T(Tok.HairLine);
+        TextCol = T(Tok.TextCol);
+        Subtle = T(Tok.Subtle);
+        Faint = T(Tok.Faint);
+        ErrorCol = T(Tok.ErrorCol);
     }
 
     // ---- corner radii as tokens: 1995 had none -----------------------------------------------------
-    public static int RadShell { get; private set; } = 18;    // the window shell
-    public static int RadCard { get; private set; } = 8;      // a card / panel
+    public static int RadShell { get; private set; } = 10;    // the floating rail / content cards, the deck
+    public static int RadCard { get; private set; } = 10;     // a card / panel
     public static int RadControl { get; private set; } = 8;   // a button
     public static int RadChip { get; private set; } = 6;      // a badge, a swatch
     public static int RadSmall { get; private set; } = 4;     // the smallest insets
 
     private static void SetRadii(bool square)
     {
-        RadShell = square ? 0 : 18;
-        RadCard = square ? 0 : 8;
+        RadShell = square ? 0 : 10;
+        RadCard = square ? 0 : 10;
         RadControl = square ? 0 : 8;
         RadChip = square ? 0 : 6;
         RadSmall = square ? 0 : 4;
@@ -167,58 +162,26 @@ public static partial class Theme
         if (!on) return;
         var sm = g.SmoothingMode;
         g.SmoothingMode = SmoothingMode.None;
-        using var pen = new Pen(enabled ? Color.Black : FaceShadow);
-        // The tick is three descending strokes then four ascending — drawn, not typed.
-        int x = box.X + 3, y = box.Y + box.Height / 2 - 1;
-        for (int i = 0; i < 3; i++) g.DrawLine(pen, x + i, y + i, x + i, y + i + 2);
-        for (int i = 0; i < 4; i++) g.DrawLine(pen, x + 3 + i, y + 2 - i, x + 3 + i, y + 4 - i);
+        using var br = new SolidBrush(enabled ? FaceDark : FaceShadow);
+        // The tick is drawn, not typed: seven 1x3 columns, down three then up four (Mixtape's glyph).
+        int[] top = { 2, 3, 4, 3, 2, 1, 0 };
+        for (int i = 0; i < 7; i++) g.FillRectangle(br, box.X + 3 + i, box.Y + 3 + top[i], 1, 3);
         g.SmoothingMode = sm;
     }
 
-    /// <summary>A 95 window's title bar: the navy-to-blue caption gradient with its white bold label.</summary>
+    /// <summary>A 95 window's title bar: SOLID navy when active, the shadow grey when not. (The
+    /// navy-to-blue gradient is Windows 98; Mixtape's Classic paints flat navy too.)</summary>
     public static void ClassicCaption(Graphics g, Rectangle r, bool active = true)
     {
         if (r.Width <= 0 || r.Height <= 0) return;
-        if (active)
-        {
-            using var lg = new LinearGradientBrush(r, ClassicNavy, ClassicNavyEnd, LinearGradientMode.Horizontal);
-            g.FillRectangle(lg, r);
-        }
-        else
-        {
-            using var b = new SolidBrush(FaceShadow);
-            g.FillRectangle(b, r);
-        }
+        using var b = new SolidBrush(active ? ClassicNavy : FaceShadow);
+        g.FillRectangle(b, r);
     }
 
-    /// <summary>A caption button (minimise / maximise / close): a small raised face carrying a pixel glyph.</summary>
-    public static void ClassicCaptionButton(Graphics g, Rectangle r, char glyph, bool pressed = false)
-    {
-        using (var b = new SolidBrush(Face)) g.FillRectangle(b, r);
-        Bevel(g, r, raised: !pressed);
-        var sm = g.SmoothingMode;
-        g.SmoothingMode = SmoothingMode.None;
-        using var pen = new Pen(Color.Black);
-        int cx = r.X + r.Width / 2 + (pressed ? 1 : 0), cy = r.Y + r.Height / 2 + (pressed ? 1 : 0);
-        switch (glyph)
-        {
-            case '_':
-                g.FillRectangle(Brushes.Black, cx - 3, cy + 3, 6, 2);
-                break;
-            case 'O':
-                g.DrawRectangle(pen, cx - 5, cy - 4, 9, 8);
-                g.DrawLine(pen, cx - 5, cy - 3, cx + 4, cy - 3);
-                break;
-            case 'X':
-                for (int i = 0; i < 7; i++)
-                {
-                    g.FillRectangle(Brushes.Black, cx - 3 + i, cy - 3 + i, 1, 1);
-                    g.FillRectangle(Brushes.Black, cx + 3 - i, cy - 3 + i, 1, 1);
-                }
-                break;
-        }
-        g.SmoothingMode = sm;
-    }
+    /// <summary>The pointer a clickable control shows: the hand in the modern look, the plain arrow in
+    /// Classic (1995 had no hand cursor). Resolved when Windows asks, so a live skin switch needs no
+    /// walk over the controls: <c>public override Cursor Cursor { get => Theme.Pointing(base.Cursor); ... }</c>.</summary>
+    public static Cursor Pointing(Cursor c) => Classic && c == Cursors.Hand ? Cursors.Default : c;
 
     // ---- carrying baked properties across a skin change --------------------------------------------
 
@@ -244,18 +207,16 @@ public static partial class Theme
         return spec.Display ? DisplayFont(spec.Size, spec.Style) : UiFontShared(spec.Size, spec.Style);
     }
 
-    /// <summary>What each surface token is in each skin. Used to move a baked property to the other
-    /// skin; anything that matches no token is a deliberate colour and is left alone.</summary>
+    /// <summary>The tokens a control may BAKE into a property, in Remap's match order (first match
+    /// wins). Bg goes first: it is what the forms bake. RailBg, AccentBright and OnAccent are left out on
+    /// purpose - their Classic values (Face, Navy, White) are already claimed by Bg, Accent and RowBg, so
+    /// they are read in OnPaint only and never baked.</summary>
+    private static readonly Tok[] RemapOrder =
+        { Tok.Bg, Tok.PanelBg, Tok.RowBg, Tok.RowHover, Tok.Border, Tok.HairLine, Tok.TextCol, Tok.Subtle, Tok.Faint, Tok.ErrorCol };
+
     private static IEnumerable<(Color Modern, Color Classic)> TokenPairs()
     {
-        yield return (Color.FromArgb(16, 17, 20), Face);                                  // Bg
-        yield return (Color.FromArgb(24, 26, 31), Face);                                  // PanelBg
-        yield return (Color.FromArgb(33, 36, 43), Color.White);                           // RowBg
-        yield return (Color.FromArgb(43, 47, 56), Color.FromArgb(230, 230, 230));         // RowHover
-        yield return (Color.FromArgb(232, 234, 238), Color.Black);                        // TextCol
-        yield return (Color.FromArgb(138, 144, 155), Color.FromArgb(56, 56, 56));         // Subtle
-        yield return (Color.FromArgb(52, 56, 66), FaceShadow);                            // Border
-        yield return (Color.FromArgb(255, 120, 110), Color.FromArgb(128, 0, 0));          // ErrorCol
+        foreach (var t in RemapOrder) yield return Surf[(int)t];
         yield return (_accentSpec, ClassicNavy);                                          // Accent
         yield return (Dim(_accentSpec), Color.FromArgb(0, 0, 80));                        // AccentDim
     }

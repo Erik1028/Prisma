@@ -69,22 +69,125 @@ public class MainForm : Form
     private const uint MOD_ALT = 1, MOD_CONTROL = 2;
     private const int HK_LIGHTS = 1, HK_PROFILE = 2, HK_RESCAN = 3;
 
+    protected override void OnHandleDestroyed(EventArgs e)
+    {
+        // a re-created handle (start minimised flips ShowInTaskbar) must re-register, or display-sleep
+        // auto-off stays bound to the dead window
+        if (_powerNotify != IntPtr.Zero) { UnregisterPowerSettingNotification(_powerNotify); _powerNotify = IntPtr.Zero; }
+        base.OnHandleDestroyed(e);
+    }
+
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        int dark = 1;
-        try { DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int)); } catch { } // dark title bar
-        if (_settings != null) Acrylic.Apply(this, _settings.GlassEffect);
+        ApplyWindowChrome();
         if (_settings != null) ApplyHotkeys();
         if (_powerNotify == IntPtr.Zero)
             if (!Harness) _powerNotify = RegisterPowerSettingNotification(Handle, ref s_displayStateGuid, 0);
     }
 
-    // The side margins that appear once the content block is width-capped (maximized
-    // window) show the same shared gradient the columns paint.
-    protected override void OnPaintBackground(PaintEventArgs e) => Backdrop.Paint(e.Graphics, this);
+    // The wallpaper, plus the soft shadows the floating cards cast on it (the cards never paint
+    // outside their own bounds, so the form paints their shadows into the gaps).
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        Backdrop.Paint(e.Graphics, this);
+        if (_leftCol != null) SurfacePanel.PaintShadow(e.Graphics, _leftCol.Bounds);
+        if (_rightCol != null) SurfacePanel.PaintShadow(e.Graphics, _rightCol.Bounds);
+    }
 
-    private enum Effect { Static, RainbowWave, ColorCycle, Breathing, Strobe, Gradient, Comet, Twinkle, Ambient, Surprise, Fire, Music, Off }
+    /// <summary>Per-skin DWM chrome, re-applied on every live skin switch (Prisma never restarts to
+    /// switch): dark mode and Win11 rounded corners for Modern, square corners and no transitions for
+    /// Classic, never the 1 px DWM border (the strip meets the window edge directly). Glass and the
+    /// opacity slider are Modern-only.</summary>
+    private void ApplyWindowChrome()
+    {
+        if (!IsHandleCreated) return;
+        int dark = Theme.Classic ? 0 : 1;
+        int corner = Theme.Classic ? 1 /*DONOTROUND*/ : 2 /*ROUND*/;
+        int border = unchecked((int)0xFFFFFFFE);          // DWMWA_COLOR_NONE
+        int noTransitions = Theme.Classic ? 1 : 0;
+        try
+        {
+            DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int));
+            DwmSetWindowAttribute(Handle, 33, ref corner, sizeof(int));
+            DwmSetWindowAttribute(Handle, 34, ref border, sizeof(int));
+            DwmSetWindowAttribute(Handle, 3, ref noTransitions, sizeof(int));
+        }
+        catch { }
+        // NOT Opacity: this runs from OnHandleCreated, and a start-minimised window keeps Opacity 0
+        // until Shown hides it - resetting it here flashed the window at every boot. Opacity survives
+        // handle re-creation; the callers that change it set it themselves.
+        if (_settings != null) Acrylic.Apply(this, _settings.GlassEffect && !Theme.Classic);
+    }
+
+    [DllImport("user32.dll")] private static extern bool IsZoomed(IntPtr hWnd);
+
+    /// <summary>What a press on the FORM itself (no child took it) means: the top resize band, the
+    /// caption, or plain client. A pure function of the point, so --hitmap can draw it.</summary>
+    private int ClientHitCode(Point pt)
+    {
+        // the resize band is the skin's own top frame: 3 px of raised 95 frame, so the navy band below
+        // it drags all the way up; 5 px in the modern look
+        if (!IsZoomed(Handle) && pt.Y < (Theme.Classic ? 3 : 5))
+            return pt.X < 16 ? HTTOPLEFT : pt.X >= ClientSize.Width - 16 ? HTTOPRIGHT : HTTOP;
+        return _strip.DragRect.Contains(pt) ? HTCAPTION : HTCLIENT;
+    }
+
+    /// <summary>
+    /// Harness only (<c>--test-main --hitmap file.png</c>): walks the client and paints what a press at
+    /// each point would do, following the same HTTRANSPARENT chain Windows does (deck card -> strip ->
+    /// form). Blue = drags the window (HTCAPTION), red = resizes (top band), green = a control takes it,
+    /// grey = plain client.
+    /// </summary>
+    private void WriteHitMap(string path)
+    {
+        var size = ClientSize;
+        // pure colour codes (DrawToBitmap would add a caption the window never has and shift everything)
+        using var shot = new Bitmap(size.Width, size.Height);
+        using var g = Graphics.FromImage(shot);
+        using var cap = new SolidBrush(Color.FromArgb(40, 110, 255));
+        using var top = new SolidBrush(Color.FromArgb(255, 40, 40));
+        using var ctl = new SolidBrush(Color.FromArgb(40, 200, 80));
+        using var cli = new SolidBrush(Color.FromArgb(70, 70, 70));
+        const int step = 2;
+        for (int y = 0; y < size.Height; y += step)
+            for (int x = 0; x < size.Width; x += step)
+            {
+                var p = new Point(x, y);
+                // geometric descent in z-order (index 0 is topmost) - ChildWindowFromPointEx returns
+                // nothing on the click-through ghost window the harness uses
+                Control hit = this;
+                var local = p;
+                for (bool found = true; found;)
+                {
+                    found = false;
+                    foreach (Control c in hit.Controls)
+                    {
+                        if (!c.Visible || !c.Bounds.Contains(local)) continue;
+                        local = new Point(local.X - c.Left, local.Y - c.Top);
+                        hit = c;
+                        found = true;
+                        break;
+                    }
+                }
+                // the transparent chain: a deck point that does not take the mouse, and the strip itself
+                if (hit is DeckCard dk && !dk.TakesMouse(local)) hit = dk.Parent ?? this;
+                if (hit is TitleStrip) hit = this;
+                Brush b = hit != this ? ctl : ClientHitCode(p) switch
+                {
+                    HTCAPTION => cap,
+                    HTCLIENT => cli,
+                    _ => top,
+                };
+                g.FillRectangle(b, x, y, step, step);
+            }
+        shot.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+        DebugLog.Log("hitmap written: " + path);
+    }
+    private const int WM_NCHITTEST = 0x84, WM_CONTEXTMENU = 0x7B;
+    private const int HTCLIENT = 1, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14;
+
+    internal enum Effect { Static, RainbowWave, ColorCycle, Breathing, Strobe, Gradient, Comet, Twinkle, Ambient, Surprise, Fire, Music, Off }
 
     private readonly OpenRgbClient _openRgb = new();
     private readonly System.Windows.Forms.Timer _frameTimer = new() { Interval = 40 }; // 25 fps
@@ -116,39 +219,53 @@ public class MainForm : Form
     private int _bootSettlePasses;                                                            // remaining boot-settle re-asserts
     private readonly DateTime _launchedUtc = DateTime.UtcNow;                                 // for the "boot window" gate on the settle re-assert
 
-    private FlowLayoutPanel _devicePanel = null!;
-    private GradientPanel _leftCol = null!, _rightCol = null!;
-    private CardPanel _headerCard = null!;
-    private RoundedButton? _maxBtn; // custom caption maximise/restore button (glyph toggles with state)
-    private Label _status = null!;
-    private Label _versionLabel = null!;
-    private RainbowTitle _title = null!;     // clickable rainbow wordmark in the header
+    private ScrollList _deviceList = null!;                       // the DEVICES list (its own scroll bar)
+    private FlowLayoutPanel _devicePanel = null!;                 // == _deviceList.Content: the rows
+    private ScrollList _profileList = null!;                      // the PROFILES list
+    private SurfacePanel _leftCol = null!, _rightCol = null!;   // the rail and content cards
+    private TitleStrip _strip = null!;                            // the title bar (Chrome.cs)
+    private DeckCard _deck = null!;                               // "now lighting" card in the strip
+    private CaptionButton? _maxBtn;                               // maximise/restore (glyph follows the state)
+    private Label _status = null!;                                // full status, rail footer (wraps)
+    private BrandButton _title = null!;                           // logo + wordmark; opens About
     private AboutPopup? _about;               // the About panel it opens (null when closed)
     private SleekSlider _speedBar = null!;
     private SleekSlider _brightBar = null!;
     private SleekSlider _hueBar = null!;
-    private Label _speedValue = null!;
-    private Label _brightValue = null!;
-    private Label _hueValue = null!;
+    private InlineLabel _speedValue = null!;
+    private InlineLabel _brightValue = null!;
+    private InlineLabel _hueValue = null!;
     private bool _syncingHue;
     private RoundedButton _rescanButton = null!;
     private readonly List<RoundedButton> _effectButtons = new();
     private readonly List<RoundedButton> _swatchButtons = new();
     private readonly List<RoundedButton> _savedSwatchButtons = new();
     private const int SwatchCols = 10;          // unified swatch grid width (presets + saved)
-    private TableLayoutPanel _swatchGrid = null!;
+    private Panel _swatchGrid = null!;                            // square colour wells, laid out by LayoutSwatches
     private RoundedButton _targetButton = null!;
     private RoundedButton _gradientBtn = null!;
     private RoundedButton _customBtn = null!, _saveBtn = null!;   // COLOR action row (rebuilt 2/3-col by effect)
-    private TableLayoutPanel _actionRow = null!;
-    private Label _speedLabel = null!, _brightLabel = null!;      // TUNING section labels (SPEED hides for motionless effects)
-    private Label _autoColorNote = null!;                         // "Colors: automatic" shown for self-colouring effects
-    private int _brightTopHi, _brightTopLo, _sliderYOff;          // brightness row positions with / without SPEED
-    private CardPanel _tuningCard = null!;                        // last card in the right stack; shrinks when SPEED hides
-    private int _tuningHFull, _tuningHSolo;                       // TUNING card heights with / without the SPEED row
-    private RoundedButton _lightsBtn = null!, _screenBtn = null!, _pinBtn = null!; // header quick actions
-    private LivePreview _preview = null!;
-    private CardPanel _devicesCard = null!, _previewCard = null!; // left column, re-laid out on group expand/collapse
+    private Panel _actionRow = null!;                             // Custom / Save / Gradient end, natural widths
+    private InlineLabel _speedLabel = null!, _brightLabel = null!, _hueLabel = null!; // inline slider captions
+    private InlineLabel _autoColorNote = null!;                   // replaces the Applies-to chip for self-colouring effects
+    private CardPanel _tuningCard = null!;                        // TUNING, docked at the content card's bottom
+    private CardPanel _effectsCard = null!, _colorCard = null!, _stageCard = null!; // content sections
+    private Panel _effectGrid = null!;                            // effect tiles, laid out by LayoutEffectTiles
+    private PowerButton _lightsBtn = null!;                       // strip: lights on / off
+    private FlatIconButton _screenBtn = null!, _pinBtn = null!;   // strip: screen sync, always on top
+    private LivePreview _preview = null!;                         // the LIVE stage
+    private CardPanel _devicesCard = null!, _profilesCard = null!; // rail sections
+    private RoundedButton _profileAdd = null!;                    // "+" on the PROFILES caption: save current look
+    private Label _profileHint = null!;                           // shown while there are no profiles
+    private readonly List<ProfileRow> _profileRows = new();
+    private string? _appliedProfile;                              // name of the profile whose look is showing
+    private bool _gradientShown = true;                           // DESIRED visibility of Gradient end: Control.Visible
+                                                                  // reads false while the form is hidden, so never compare it
+    private int _applyingProfile;                                 // >0 while ApplyProfile drives SetColor/SelectEffect
+    private Color _ambientNow;                                    // last sampled screen colour (Screen sync art)
+    private int _ambientArtShown;                                 // the _ambientNow the tiles last painted
+    private string? _preAutoApplied;                              // the applied-profile marker when a trigger took over
+    private long _aboutClosedAt;                                  // re-click-to-close guard for the About popup
 
     private Effect _effect = Effect.Static;
     private Color _currentColor = Color.FromArgb(0, 200, 170);
@@ -229,6 +346,9 @@ public class MainForm : Form
             _settings.NightOffEnabled = _settings.IdleOffEnabled = false;
             _settings.OffWhenLocked = _settings.OffWhenSleeps = _settings.OffWhenDisplaySleeps = false;
             _settings.GlassEffect = Environment.GetEnvironmentVariable("PRISMA_HARNESS_GLASS") == "1";
+            // PRISMA_CLASSIC picked the skin before settings were read; keep the in-memory setting in step,
+            // or the first settings change would flip the window back to the saved skin.
+            _settings.ClassicSkin = Theme.Classic;
         }
         if (Enum.TryParse(_settings.Effect, out Effect savedEffect)) _effect = savedEffect;
         _currentColor = Color.FromArgb(_settings.ColorArgb);
@@ -236,7 +356,7 @@ public class MainForm : Form
         _frameTimer.Interval = Math.Max(20, 1000 / Math.Clamp(_settings.FrameRate, 5, 30));
         Theme.SetAccent(Color.FromArgb(_settings.AccentArgb));
         Backdrop.Intensity = Math.Clamp(_settings.BackdropGlow, 0, 100);
-        Backdrop.Glass = _settings.GlassEffect;
+        Backdrop.Glass = _settings.GlassEffect && !Theme.Classic;
         ToolStripManager.Renderer = new ThemedMenuRenderer(); // themes every menu + nested submenu uniformly
 
         SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint |
@@ -366,7 +486,7 @@ public class MainForm : Form
             UnregisterHotKey(Handle, HK_LIGHTS);
             UnregisterHotKey(Handle, HK_PROFILE);
             UnregisterHotKey(Handle, HK_RESCAN);
-            if (_powerNotify != IntPtr.Zero) UnregisterPowerSettingNotification(_powerNotify);
+            if (_powerNotify != IntPtr.Zero) { UnregisterPowerSettingNotification(_powerNotify); _powerNotify = IntPtr.Zero; }
             SystemEvents.SessionSwitch -= OnSessionSwitch;
             SystemEvents.PowerModeChanged -= OnPowerModeChanged;
             _watchdog.Stop();
@@ -397,8 +517,10 @@ public class MainForm : Form
     private void BuildUi()
     {
         Text = "Prisma";
-        ClientSize = new Size(920, 770); // right stack (effects+colour+tuning) drives the height; preview now lives left
-        MinimumSize = Size; // outer size incl. chrome — DPI-proof, clamps stale saved bounds
+        // Sized from the frame our WM_NCCALCSIZE actually leaves (sides + bottom, no caption), so the
+        // client really is MIN_CW x DEF_CH. ClientSize= would add a caption height the window never has.
+        Size = OuterSizeFor(new Size(MIN_CW, DEF_CH));
+        MinimumSize = OuterSizeFor(new Size(MIN_CW, MinClientH)); // clamps stale saved bounds too
         FormBorderStyle = FormBorderStyle.Sizable;
         MaximizeBox = true;
         BackColor = Theme.Bg;
@@ -424,328 +546,224 @@ public class MainForm : Form
             if (_settings.Maximized) WindowState = FormWindowState.Maximized;
         }
 
-        // The header floats: a rounded translucent card over the gradient, like every
-        // section card. The zone below it has no bottom margin of its own — the columns'
-        // 12px top padding provides the gap, keeping the uniform rhythm.
-        const int HEADER_CARD_H = 56;
-        const int HEADER_H = 12 + HEADER_CARD_H;
-        int rightW = Math.Min(ClientSize.Width - LEFT_COL_W, RIGHT_COL_MAX);
-        int colH = ClientSize.Height - HEADER_H;
-
-        // Containers get their final bounds BEFORE children are added, so the children's
-        // anchor offsets are computed against the real size (Dock.Fill would hand
-        // them a default-sized parent and wreck anchored layout on resize). The same
-        // discipline applies one level deeper: every CardPanel is sized before its
-        // children go in.
-        var headerZone = new GradientPanel
+        // ================================================================ the title strip
+        // One borderless strip that IS the title bar, on Mixtape's metrics: logo + wordmark, the power
+        // disc, the deck, two flat toggles, the gear and the caption buttons. The strip answers
+        // HTTRANSPARENT and WndProc turns its empty area into HTCAPTION: native drag, Aero snap,
+        // double-click maximise and drag-restore - no ReleaseCapture hack.
+        string version = Application.ProductVersion.Split('+')[0];
+        _strip = new TitleStrip
         {
-            Left = 0, Top = 0, Width = ClientSize.Width, Height = HEADER_H,
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            Left = 0, Top = 0, Width = ClientSize.Width, Height = TitleStrip.TopH,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, TabIndex = 0,
         };
-        Controls.Add(headerZone);
+        Controls.Add(_strip);
 
-        // The header card and both columns are positioned by LayoutColumns(): on wide
-        // windows the content block stops growing and centers instead of stretching.
-        var header = _headerCard = new CardPanel
+        _title = new BrandButton { TabIndex = 0 };
+        _title.Click += (_, _) => ShowAboutPanel();
+        _tips.SetToolTip(_title, $"About Prisma {version} — devices, backends");
+
+        _lightsBtn = new PowerButton { TabIndex = 1 };
+        _lightsBtn.Click += (_, _) => ToggleLights();
+        _tips.SetToolTip(_lightsBtn, "Lights on / off  (Ctrl+Alt+L)");
+
+        _deck = new DeckCard();
+        _deck.TileClicked += (_, _) => PickColour();
+        _deck.TipRegionChanged += (_, _) => _tips.SetToolTip(_deck, _deck.TipAt(_deck.PointToClient(Cursor.Position)));
+        // a right-click on the deck reaches WndProc's WM_CONTEXTMENU like the rest of the strip (one menu)
+
+        _screenBtn = new FlatIconButton { Glyph = Glyphs.Monitor, ClassicIcon = ClassicIcons.Id.Monitor, TabIndex = 2 };
+        _screenBtn.Click += (_, _) => SelectEffect(_effect == Effect.Ambient ? Effect.Static : Effect.Ambient);
+        _tips.SetToolTip(_screenBtn, "Screen sync on / off");
+        _pinBtn = new FlatIconButton { Glyph = Glyphs.Pin, ActiveGlyph = Glyphs.Pinned, ClassicIcon = ClassicIcons.Id.Pin, TabIndex = 3 };
+        _pinBtn.Click += (_, _) => { TopMost = !TopMost; _settings.AlwaysOnTop = TopMost; UpdateHeaderButtons(); SaveSoon(); };
+        _tips.SetToolTip(_pinBtn, "Keep window on top");
+        var gearBtn = new FlatIconButton { Glyph = Glyphs.Gear, ClassicIcon = ClassicIcons.Id.Gear, Ghost = true, TabIndex = 4 };
+        gearBtn.Click += (_, _) => OpenSettings();
+        _tips.SetToolTip(gearBtn, "Settings — appearance, auto-off, effects");
+
+        var minBtn = new CaptionButton { Which = CaptionButton.Kind.Minimize };
+        minBtn.Click += (_, _) => WindowState = FormWindowState.Minimized;
+        _tips.SetToolTip(minBtn, "Minimize to tray");
+        _maxBtn = new CaptionButton { Which = CaptionButton.Kind.Maximize };
+        _maxBtn.Click += (_, _) => WindowState = WindowState == FormWindowState.Maximized
+            ? FormWindowState.Normal : FormWindowState.Maximized;
+        var closeBtn = new CaptionButton { Which = CaptionButton.Kind.Close };
+        closeBtn.Click += (_, _) => Close();
+        _tips.SetToolTip(closeBtn, "Close");
+
+        _strip.Brand = _title; _strip.Power = _lightsBtn; _strip.Deck = _deck;
+        _strip.Screen = _screenBtn; _strip.Pin = _pinBtn; _strip.Gear = gearBtn;
+        _strip.Min = minBtn; _strip.Max = _maxBtn; _strip.Close = closeBtn;
+        _strip.Controls.AddRange(new Control[] { _title, _lightsBtn, _deck, _screenBtn, _pinBtn, gearBtn, minBtn, _maxBtn, closeBtn });
+        _strip.Resize += (_, _) => _strip.Relayout();
+        Activated += (_, _) => _strip.CaptionActive = true;
+        Deactivate += (_, _) => _strip.CaptionActive = false;
+        UpdateMaxGlyph();
+        TopMost = _settings.AlwaysOnTop;
+
+        // ================================================================ the rail (left card)
+        // Mixtape's rail: DEVICES (its library), PROFILES (its playlists), and a footer with the full
+        // status line and Rescan. Sections are positioned by LayoutLeftColumn.
+        int bodyTop = TitleStrip.TopH, bodyH = ClientSize.Height - bodyTop - GAP;
+        var left = _leftCol = new SurfacePanel
         {
-            Left = 12, Top = 12, Width = LEFT_COL_W + rightW - 24, Height = HEADER_CARD_H,
-            Anchor = AnchorStyles.Top | AnchorStyles.Left,
-            CaptionStyle = Theme.Classic,   // Classic draws this card as the window's title bar
-        };
-        headerZone.Controls.Add(header);
-
-        // Drag + double-click-to-maximise on the empty header (OS caption removed in
-        // WM_NCCALCSIZE); the min/max/close buttons live in the icon row below.
-
-        void HeaderDrag(object? s, MouseEventArgs e)
-        {
-            if (e.Button != MouseButtons.Left) return;
-            if (e.Clicks >= 2) // double-click the caption => toggle maximise
-            {
-                WindowState = WindowState == FormWindowState.Maximized
-                    ? FormWindowState.Normal : FormWindowState.Maximized;
-                return;
-            }
-            ReleaseCapture(); // hand the drag to Windows: native move + Aero snap
-            SendMessage(Handle, WM_NCLBUTTONDOWN, (IntPtr)HTCAPTION, IntPtr.Zero);
-        }
-        headerZone.MouseDown += HeaderDrag;
-        header.MouseDown += HeaderDrag;
-
-        var left = _leftCol = new GradientPanel
-        {
-            Left = 0, Top = HEADER_H, Width = LEFT_COL_W, Height = colH,
-            Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left
+            Surface = SurfacePanel.Kind.Rail, Left = GAP, Top = bodyTop, Width = RAIL_W, Height = bodyH,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left, TabIndex = 1,
         };
         Controls.Add(left);
-
-        // DEVICES card sits at the top; LIVE PREVIEW below it, Rescan under that. All three are
-        // Top|Left anchored and (re)positioned by LayoutLeftColumn() — called after every detect,
-        // group expand/collapse, AND resize — against the current column height. DEV_CARD_H is
-        // only the initial guess before the first LayoutLeftColumn runs.
-        const int DEV_CARD_H = 392;
-        var devicesCard = new CardPanel
+        const int railSecW = RAIL_W - 4;   // section inner = RAIL_W - 24: 12 px from each card edge
+        _devicesCard = new CardPanel
         {
-            Title = "DEVICES", Left = 12, Top = 12, Width = 286, Height = DEV_CARD_H,
-            Translucent = false, // hosts an opaque scrollable list
-            Anchor = AnchorStyles.Top | AnchorStyles.Left
+            Section = true, OnRail = true, Title = "DEVICES", Left = 2, Top = 16, Width = railSecW, Height = 200,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left,
         };
-        left.Controls.Add(devicesCard);
-        _devicesCard = devicesCard;
-
-        _devicePanel = new FlowLayoutPanel
+        left.Controls.Add(_devicesCard);
+        _deviceList = new ScrollList
         {
-            Left = 12, Top = 36, Width = 262, Height = devicesCard.Height - 48,
-            FlowDirection = FlowDirection.TopDown, WrapContents = false,
-            AutoScroll = true, BackColor = Theme.PanelBg,
-            Anchor = AnchorStyles.Top | AnchorStyles.Left
+            Left = CardPanel.SectionPad, Top = CardPanel.SectionTop, Width = railSecW - 2 * CardPanel.SectionPad, Height = 150,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left,
         };
-        devicesCard.Controls.Add(_devicePanel);
-        // rows track the actual client width, so the side margins stay symmetric
-        // whether or not the scrollbar is showing
-        _devicePanel.ClientSizeChanged += (_, _) => FitDeviceRows();
+        _devicePanel = _deviceList.Content;
+        _devicesCard.Controls.Add(_deviceList);
+        // rows track the list's row width, so the side margins stay symmetric whether or not the
+        // scroll bar is showing
+        _deviceList.RowWidthChanged += (_, _) => FitDeviceRows();
 
-        _rescanButton = MakeButton("Rescan devices", 12, colH - 50, 286, 38);
-        _rescanButton.Anchor = AnchorStyles.Top | AnchorStyles.Left; // positioned by LayoutLeftColumn (under the small preview)
+        _profilesCard = new CardPanel
+        {
+            Section = true, OnRail = true, Title = "PROFILES", Left = 2, Top = 260, Width = railSecW, Height = 80,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left,
+        };
+        left.Controls.Add(_profilesCard);
+        _profileAdd = new RoundedButton
+        {
+            Variant = RoundedButton.Look.Chip, Text = "＋", CornerRadius = 6, Width = 26, Height = 22,
+            Left = railSecW - CardPanel.SectionPad - 26 + 10, Top = 0, Anchor = AnchorStyles.Top | AnchorStyles.Right,
+        };
+        _profileAdd.Click += (_, _) => SaveCurrentAsProfile();
+        _tips.SetToolTip(_profileAdd, "Save the current look as a profile");
+        _profilesCard.Controls.Add(_profileAdd);
+        _profileHint = new CrispLabel
+        {
+            Text = "Save the current look with +", AutoSize = false, Left = CardPanel.SectionPad, Top = CardPanel.SectionTop,
+            Width = railSecW - 2 * CardPanel.SectionPad, Height = 22, ForeColor = Theme.Faint, BackColor = Color.Transparent,
+            Font = Theme.UiFont(8.5f, FontStyle.Italic), TextAlign = ContentAlignment.MiddleLeft,
+        };
+        _profilesCard.Controls.Add(_profileHint);
+        _profileList = new ScrollList
+        {
+            Left = CardPanel.SectionPad, Top = CardPanel.SectionTop, Width = railSecW - 2 * CardPanel.SectionPad, Height = 34,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left, Visible = false,
+        };
+        _profileList.RowWidthChanged += (_, _) => FitProfileRows();
+        _profilesCard.Controls.Add(_profileList);
+
+        // footer: the full status (wraps up to three lines - the fix sits at the END of the long ones),
+        // a hairline rule, then Rescan
+        _statusDot = new CrispLabel
+        {
+            Text = "●", AutoSize = true, Left = 12, ForeColor = Theme.Accent, BackColor = Color.Transparent,
+            Font = Theme.UiFont(7.5f),
+        };
+        left.Controls.Add(_statusDot);
+        _status = new CrispLabel
+        {
+            Text = "Detecting RGB devices...", AutoSize = false, AutoEllipsis = true, Left = 26,
+            Width = RAIL_W - 26 - 12, Height = 46, ForeColor = Theme.Subtle, BackColor = Color.Transparent,
+            Font = Theme.UiFont(8.75f), TextAlign = ContentAlignment.BottomLeft,   // sits on the rule, not afloat
+        };
+        left.Controls.Add(_status);
+        _rescanButton = new RoundedButton
+        {
+            Variant = RoundedButton.Look.Secondary, Text = "Rescan devices", CornerRadius = 8,
+            Left = 12, Width = RAIL_W - 24, Height = 30,
+        };
         _rescanButton.Click += async (_, _) => await DetectDevicesAsync();
+        _tips.SetToolTip(_rescanButton, "Rescan devices  (Ctrl+Alt+R)");
         left.Controls.Add(_rescanButton);
+        RebuildProfileRows();
 
-        // ---- right: the section-card stack (stretches up to RIGHT_COL_MAX) ----
-        var right = _rightCol = new GradientPanel
+        // ================================================================ the content card
+        // ONE surface (Mixtape: no box in a box): EFFECTS, COLOR, the LIVE stage flexing in the middle,
+        // TUNING docked at the bottom. Sections are positioned by LayoutContent.
+        var right = _rightCol = new SurfacePanel
         {
-            Left = LEFT_COL_W, Top = HEADER_H, Width = rightW, Height = colH,
-            Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left
+            Surface = SurfacePanel.Kind.Content, Left = GAP + RAIL_W + GAP, Top = bodyTop,
+            Width = ClientSize.Width - (GAP + RAIL_W + GAP) - GAP, Height = bodyH,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left, TabIndex = 2,
         };
         Controls.Add(right);
 
-        // Right-click the empty background (either column or the header) for a quick menu.
-        foreach (Control bg in new Control[] { left, right, header })
+        // Right-click the empty background of either card for the quick menu.
+        foreach (Control bg in new Control[] { left, right })
             bg.MouseUp += (s, e) => { if (e.Button == MouseButtons.Right) ShowBackgroundMenu((Control)s!, e.Location); };
 
-        // ---- layout system: stacked section cards + a running vertical cursor ----
-        const int LABEL_GAP = 8;      // label bottom -> its control
-        const int ROW_GAP = 8;        // between sibling rows within a card
-        const int LABEL_H = 18;
-        const int ROW_H = 32;         // target / custom / save rows
-        const int GRID_BTN_H = 40;    // effect tiles
-        const int TILE = 32;          // colour swatch tiles
-        const int SLIDER_H = 24;
-        const int RADIUS_BTN = 9;
-        const int CARD_X = 0;         // cards start at the column edge: 12px column gap = the uniform rhythm
-        const int CARD_PAD = 14;      // card inner side padding
-        const int CARD_GAP = 12;      // the one vertical gap used everywhere
-        const int CARD_TOP = 36;      // card-relative y where content starts (title + gap)
-        int cardW = rightW - 12;      // 12px right window margin, matching the left side
-        int innerW = cardW - 2 * CARD_PAD;
-
-        var titleFont = Theme.DisplayFont(15f, FontStyle.Bold); // still used for the v-label X metric
-        _title = new RainbowTitle { Left = 14, Top = 4 };
-        _title.TitleClicked += (_, _) => ShowAboutPanel();
-        _tips.SetToolTip(_title, "About Prisma — version, devices, backends");
-        header.Controls.Add(_title);
-        _versionLabel = new Label
+        int secW = right.Width - 2 * (PAD - CardPanel.SectionPad);   // a section spans the page inset minus its own pad
+        int inner = secW - 2 * CardPanel.SectionPad;                 // == the card width minus the 22 px page inset each side
+        CardPanel AddSection(string title)
         {
-            Text = "v" + Application.ProductVersion.Split('+')[0],
-            Left = 14 + TextRenderer.MeasureText("PRISMA", titleFont).Width + 6, Top = 14,
-            AutoSize = true, ForeColor = Theme.Subtle, Font = Theme.UiFont(8.5f)
-        };
-        header.Controls.Add(_versionLabel);
-        SyncCaptionText();
-
-        // Header icon toolbar, laid out right-to-left so it stays anchored to the right
-        // edge. Real icon-font glyphs (Segoe Fluent Icons) center optically; the old
-        // emoji glyphs carried uneven side bearings and sat visibly off-center.
-        bool fluent = Theme.IconFontName != null;
-        int iconRight = header.Width - 14;
-
-        // Custom window controls (min/max/close) own the far-right corner of the row; the
-        // OS title bar is removed in WM_NCCALCSIZE. Flat — they blend into the card and only
-        // fill on hover (close goes red). The function toolbar is laid out to their left.
-        RoundedButton AddCaptionBtn(string g, string fb, Color hover, string tip)
-        {
-            var b = new RoundedButton
+            var c = new CardPanel
             {
-                Text = fluent ? g : fb,
-                Font = fluent ? Theme.IconFont(10f) : Theme.UiFont(11f),
-                IconGlyph = fluent,
-                FillColor = Color.Transparent, HoverFillColor = hover, BorderSize = 0, CornerRadius = RADIUS_BTN,
-                Left = iconRight - 34, Top = 9, Width = 34, Height = 38,
-                Anchor = AnchorStyles.Top | AnchorStyles.Right
+                Section = true, Title = title, Left = PAD - CardPanel.SectionPad, Top = 0, Width = secW, Height = 100,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
             };
-            iconRight -= 36;
-            _tips.SetToolTip(b, tip);
-            header.Controls.Add(b);
-            return b;
+            right.Controls.Add(c);
+            return c;
         }
-        var closeBtn = AddCaptionBtn("", "✕", Color.FromArgb(232, 17, 35), "Close");
-        closeBtn.Click += (_, _) => Close();
-        _maxBtn = AddCaptionBtn("", "□", Theme.RowHover, "Maximize");
-        _maxBtn.Click += (_, _) => WindowState = WindowState == FormWindowState.Maximized
-            ? FormWindowState.Normal : FormWindowState.Maximized;
-        var minBtn = AddCaptionBtn("", "—", Theme.RowHover, "Minimize");
-        minBtn.Click += (_, _) => WindowState = FormWindowState.Minimized;
-        UpdateMaxGlyph();
-        iconRight -= 12; // divider between the window controls and the function toolbar
 
-        RoundedButton AddHeaderIcon(string glyph, string fallback, string tip)
+        // ---------------- EFFECTS: tiles with their own art, left-aligned labels
+        _effectsCard = AddSection("EFFECTS");
+        _effectGrid = new Panel
+        {
+            BackColor = Color.Transparent, Left = CardPanel.SectionPad, Top = CardPanel.SectionTop, Width = inner, Height = 100,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+        };
+        _effectsCard.Controls.Add(_effectGrid);
+        // "All off" is not a tile: off lives on the strip's power disc (Ctrl+Alt+L), its right-click menu
+        // and the tray menu.
+        var effects = new[]
+        {
+            Effect.Static, Effect.RainbowWave, Effect.ColorCycle, Effect.Breathing, Effect.Strobe, Effect.Gradient,
+            Effect.Comet, Effect.Twinkle, Effect.Ambient, Effect.Surprise, Effect.Fire, Effect.Music,
+        };
+        foreach (var fx in effects)
         {
             var btn = new RoundedButton
             {
-                Text = fluent ? glyph : fallback,
-                Font = fluent ? Theme.IconFont(12f) : Theme.UiFont(12f),
-                IconGlyph = fluent,
-                Left = iconRight - 38, Top = 9, Width = 38, Height = 38, CornerRadius = RADIUS_BTN,
-                Anchor = AnchorStyles.Top | AnchorStyles.Right
-            };
-            iconRight -= 46;
-            _tips.SetToolTip(btn, tip);
-            header.Controls.Add(btn);
-            return btn;
-        }
-
-        // nav cluster (rightmost): settings, profiles
-        var settingsBtn = AddHeaderIcon("", "⚙", "Settings - appearance, auto-off, effects");
-        settingsBtn.Click += (_, _) =>
-        {
-            SaveNow(); // flush live effect/colour so the Commands tab copies the current look
-            using var dlg = new SettingsForm(_settings, ApplySettingsChanged);
-            dlg.ShowDialog(this);
-        };
-        var profilesBtn = AddHeaderIcon("", "▤", "Lighting profiles - save and recall complete setups");
-        profilesBtn.Click += (_, _) =>
-        {
-            var menu = new ContextMenuStrip();
-            FillProfileItems(menu.Items);
-            Theme.StyleMenu(menu);
-            menu.Show(profilesBtn, new Point(0, profilesBtn.Height + 4));
-        };
-
-        iconRight -= 6; // small divider before the quick-action cluster
-
-        // quick-action cluster (left to right: lights, colour, screen sync, pin)
-        _pinBtn = AddHeaderIcon("", "\U0001F4CC", "Keep window on top");
-        _pinBtn.Click += (_, _) => { TopMost = !TopMost; _settings.AlwaysOnTop = TopMost; UpdateHeaderButtons(); SaveSoon(); };
-        _screenBtn = AddHeaderIcon("", "\U0001F5A5", "Screen sync on / off");
-        _screenBtn.Click += (_, _) => SelectEffect(_effect == Effect.Ambient ? Effect.Static : Effect.Ambient);
-        var colorBtn = AddHeaderIcon("", "\U0001F3A8", "Pick a colour");
-        colorBtn.Click += (_, _) =>
-        {
-            using var dlg = new ColorPickerDialog(ActivePickColor);
-            if (dlg.ShowDialog(this) == DialogResult.OK) SetColor(dlg.SelectedColor);
-        };
-        _lightsBtn = AddHeaderIcon("", "⏻", "Lights on / off  (Ctrl+Alt+L)");
-        _lightsBtn.Click += (_, _) => ToggleLights();
-
-        TopMost = _settings.AlwaysOnTop;
-        UpdateHeaderButtons();
-
-        _statusDot = new Label
-        {
-            Text = "●", Left = 14, Top = 32, AutoSize = true,
-            ForeColor = Theme.Accent, Font = Theme.UiFont(9f)
-        };
-        header.Controls.Add(_statusDot);
-        _status = new Label
-        {
-            Text = "Detecting RGB devices...", Left = 30, Top = 33,
-            Width = header.Width - 30 - 312, Height = 18, AutoSize = false, AutoEllipsis = true, // leaves room for 6 header icons
-            ForeColor = Theme.Subtle, Font = Theme.UiFont(9f),
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
-        };
-        header.Controls.Add(_status);
-
-        // Everything below is a running cursor of stacked section cards.
-        int y = 12;
-
-        CardPanel AddCard(string title, int contentH)
-        {
-            var card = new CardPanel
-            {
-                Title = title, Left = CARD_X, Top = y, Width = cardW, Height = CARD_TOP + contentH + CARD_GAP,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
-            };
-            right.Controls.Add(card);
-            y += card.Height + CARD_GAP;
-            return card;
-        }
-
-        TableLayoutPanel MakeGrid(CardPanel parent, int top, int cols, int height)
-        {
-            var t = new TableLayoutPanel
-            {
-                Left = CARD_PAD, Top = top, Width = parent.Width - 2 * CARD_PAD, Height = height,
-                ColumnCount = cols, BackColor = Color.Transparent, Margin = Padding.Empty,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
-            };
-            for (int c = 0; c < cols; c++) t.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / cols));
-            parent.Controls.Add(t);
-            return t;
-        }
-
-
-        // ---------------- EFFECTS card ----------------
-        var effects = new (string Label, Effect Value)[]
-        {
-            ("●  Static color", Effect.Static), ("🌈  Rainbow wave", Effect.RainbowWave), ("🔁  Color cycle", Effect.ColorCycle),
-            ("◐  Breathing", Effect.Breathing), ("⚡  Strobe", Effect.Strobe), ("◧  Gradient", Effect.Gradient),
-            ("☄  Comet", Effect.Comet), ("✦  Twinkle", Effect.Twinkle), ("🖥  Screen sync", Effect.Ambient),
-            ("🎲  Surprise me", Effect.Surprise), ("🔥  Fire", Effect.Fire), ("🎵  Music", Effect.Music)
-            // "All off" removed from the grid — a clean 4×3; off lives on the header ⏻ button
-            // (Ctrl+Alt+L), its right-click menu, and the tray menu.
-        };
-        int effectRows = (effects.Length + 2) / 3;
-        int effectsH = GRID_BTN_H * effectRows + ROW_GAP * (effectRows - 1);
-        var effectsCard = AddCard("EFFECTS", effectsH);
-        var effectsGrid = MakeGrid(effectsCard, CARD_TOP, 3, effectsH);
-        // Symmetric half-gutter cell margins (the old full-gap-on-the-right scheme made every
-        // 3rd-column tile 8px wider); the grid over-hangs the pad by a half-gutter each side so
-        // the OUTER tile edges still land exactly on CARD_PAD.
-        effectsGrid.Left = CARD_PAD - ROW_GAP / 2;
-        effectsGrid.Width = cardW - 2 * CARD_PAD + ROW_GAP;
-        EqualizeColumnsLive(effectsGrid);
-        effectsGrid.RowCount = effectRows;
-        for (int r = 0; r < effectRows; r++)
-            effectsGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, GRID_BTN_H + (r < effectRows - 1 ? ROW_GAP : 0)));
-        for (int i = 0; i < effects.Length; i++)
-        {
-            var btn = new RoundedButton
-            {
-                Text = effects[i].Label, Tag = effects[i].Value, Dock = DockStyle.Fill, CornerRadius = RADIUS_BTN,
-                Margin = new Padding(ROW_GAP / 2, 0, ROW_GAP / 2, i / 3 < effectRows - 1 ? ROW_GAP : 0)
+                Variant = RoundedButton.Look.Tile, Text = EffectLabel(fx), Tag = fx, CornerRadius = 8, Height = 40,
+                Art = (g, r) => EffectArt.Paint(g, r, fx, ActivePickColor, Color.FromArgb(_settings.GradientEndArgb), 6, _ambientNow),
             };
             btn.Click += (s, _) => SelectEffect((Effect)((RoundedButton)s!).Tag!);
             btn.MouseUp += (s, e) => { if (e.Button == MouseButtons.Right) ShowEffectMenu((RoundedButton)s!, (Effect)((RoundedButton)s!).Tag!); };
             _effectButtons.Add(btn);
-            effectsGrid.Controls.Add(btn, i % 3, i / 3);
+            _effectGrid.Controls.Add(btn);
         }
+        _effectGrid.Resize += (_, _) => { if (LayoutEffectTiles()) LayoutContent(); };
 
-        // ---------------- COLOR card ----------------
-        int colorH = ROW_H + ROW_GAP + (TILE * 2 + ROW_GAP) + ROW_GAP + ROW_H + 12 + LABEL_H + LABEL_GAP + SLIDER_H;
-        var colorCard = AddCard("COLOR", colorH);
-        int cy = CARD_TOP;
-
-        // (1) target selector: its own full-width row at the top of the card
+        // ---------------- COLOR: the Applies-to chip on the caption band, wells, actions, hue
+        _colorCard = AddSection("COLOR");
         _targetButton = new RoundedButton
         {
-            Text = "Applies to: All devices  ▾",
-            Left = CARD_PAD, Top = cy, Width = innerW, Height = ROW_H, CornerRadius = RADIUS_BTN,
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            Variant = RoundedButton.Look.Chip, Text = "Applies to: All devices  ▾", CornerRadius = 8, Height = 22, Top = 0,
+            Anchor = AnchorStyles.Top | AnchorStyles.Right,
         };
         _targetButton.Click += (_, _) => ShowTargetMenu();
-        colorCard.Controls.Add(_targetButton);
-        cy += ROW_H + ROW_GAP;
+        _colorCard.Controls.Add(_targetButton);
+        _autoColorNote = new InlineLabel
+        {
+            Text = "Colors are automatic for this effect", Top = 0, Height = 22, Width = 260,
+            TextAlign = ContentAlignment.MiddleRight, ForeColor = Theme.Faint,
+            Font = Theme.UiFont(8.75f), Visible = false, Anchor = AnchorStyles.Top | AnchorStyles.Right,
+        };
+        _colorCard.Controls.Add(_autoColorNote);
 
-        // (2) one unified swatch grid: presets (row 0) + saved colours (row 1)
-        _swatchGrid = MakeGrid(colorCard, cy, SwatchCols, TILE * 2 + ROW_GAP);
-        // Same half-gutter overhang as the effects grid, so the outer swatch fills land exactly
-        // on CARD_PAD and line up with the action buttons + effect tiles below/above (the plain
-        // MakeGrid left them inset a half-gutter, breaking the column alignment).
-        _swatchGrid.Left = CARD_PAD - ROW_GAP / 2;
-        _swatchGrid.Width = innerW + ROW_GAP;
-        EqualizeColumnsLive(_swatchGrid); // else the last swatch renders 2px wider (remainder column)
-        _swatchGrid.RowCount = 2;
-        _swatchGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, TILE + ROW_GAP));
-        _swatchGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, TILE));
+        _swatchGrid = new Panel
+        {
+            BackColor = Color.Transparent, Left = CardPanel.SectionPad, Top = CardPanel.SectionTop, Width = inner, Height = 46,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+        };
+        _colorCard.Controls.Add(_swatchGrid);
         var swatches = new[]
         {
             Color.FromArgb(255, 0, 0), Color.FromArgb(0, 255, 0), Color.FromArgb(0, 0, 255),
@@ -753,36 +771,28 @@ public class MainForm : Form
             Color.FromArgb(190, 60, 255), Color.FromArgb(255, 70, 160), Color.White,
             Color.FromArgb(255, 244, 229)
         };
-        for (int i = 0; i < swatches.Length; i++)
+        foreach (var c in swatches)
         {
-            // symmetric half-gutters so every tile is the SAME width (the last column
-            // otherwise had no right margin and rendered wider than the rest)
-            var sw = MakeSwatch(swatches[i], new Padding(ROW_GAP / 2, 0, ROW_GAP / 2, ROW_GAP));
+            var sw = MakeSwatch(c);
             sw.Click += (s, _) => SetColor((Color)((RoundedButton)s!).Tag!);
             sw.MouseUp += (s, e) => { if (e.Button == MouseButtons.Right) ShowSwatchMenu((RoundedButton)s!, (Color)((RoundedButton)s!).Tag!, saved: false); };
             _swatchButtons.Add(sw);
-            _swatchGrid.Controls.Add(sw, i % SwatchCols, 0);
+            _swatchGrid.Controls.Add(sw);
         }
-        RebuildSavedSwatches();
-        cy += TILE * 2 + ROW_GAP + ROW_GAP;
+        _swatchGrid.Resize += (_, _) => { if (LayoutSwatches()) LayoutContent(); };
 
-        // (3) action row: Custom..., + Save color, and the gradient end color. Same half-gutter
-        // scheme as the effects grid (uniform 3px cell margins + a 3px overhang each side) so
-        // all three buttons are equal width — the old 0/3·3/3·3/0 margins squeezed the middle one.
-        var actionRow = MakeGrid(colorCard, cy, 3, ROW_H);
-        actionRow.Left = CARD_PAD - 3;
-        actionRow.Width = innerW + 6;
-        actionRow.RowCount = 1;
-        var customBtn = new RoundedButton { Text = "Custom...", Dock = DockStyle.Fill, CornerRadius = RADIUS_BTN, Margin = new Padding(3, 0, 3, 0) };
-        customBtn.Click += (_, _) =>
+        _actionRow = new Panel
         {
-            using var dlg = new ColorPickerDialog(ActivePickColor);
-            if (dlg.ShowDialog(this) == DialogResult.OK) SetColor(dlg.SelectedColor);
+            BackColor = Color.Transparent, Left = CardPanel.SectionPad, Width = inner, Height = 30,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
         };
-        var saveBtn = new RoundedButton { Text = "＋ Save color", Dock = DockStyle.Fill, CornerRadius = RADIUS_BTN, Margin = new Padding(3, 0, 3, 0) };
+        _colorCard.Controls.Add(_actionRow);
+        var customBtn = new RoundedButton { Variant = RoundedButton.Look.Secondary, Text = "Custom…", CornerRadius = 8, Height = 30 };
+        customBtn.Click += (_, _) => PickColour();
+        var saveBtn = new RoundedButton { Variant = RoundedButton.Look.Secondary, Text = "＋ Save color", CornerRadius = 8, Height = 30 };
         _tips.SetToolTip(saveBtn, "Save the current color as a swatch (right-click a saved swatch to remove)");
         saveBtn.Click += (_, _) => SaveCurrentColor();
-        _gradientBtn = new RoundedButton { Text = "Gradient end", Dock = DockStyle.Fill, CornerRadius = RADIUS_BTN, Margin = new Padding(3, 0, 3, 0) };
+        _gradientBtn = new RoundedButton { Variant = RoundedButton.Look.Swatch, Text = "Gradient end", CornerRadius = 8, Height = 30 };
         _tips.SetToolTip(_gradientBtn, "Second color of the Gradient effect - the strip blends from the picked color into this one");
         _gradientBtn.Click += (_, _) =>
         {
@@ -791,39 +801,19 @@ public class MainForm : Form
             _settings.GradientEndArgb = dlg.SelectedColor.ToArgb();
             SyncEffectTuning();
             UpdateGradientButton();
+            UpdateSwatchSelection();   // the gradient art on the tiles and the deck
+            UpdateDeviceChips();       // ...and on every device running Gradient
+            LookEdited();
             SaveSoon();
             if (_effect != Effect.Gradient) SelectEffect(Effect.Gradient); // picking an end color implies the gradient
+            UpdateDeck();
         };
+        _actionRow.Controls.AddRange(new Control[] { customBtn, saveBtn, _gradientBtn });
+        _customBtn = customBtn; _saveBtn = saveBtn;
         UpdateGradientButton();
-        actionRow.Controls.Add(customBtn, 0, 0);
-        actionRow.Controls.Add(saveBtn, 1, 0);
-        actionRow.Controls.Add(_gradientBtn, 2, 0);
-        EqualizeColumnsLive(actionRow);
-        _actionRow = actionRow; _customBtn = customBtn; _saveBtn = saveBtn; // for the 2/3-col rebuild by effect
-        cy += ROW_H + 12;
+        RebuildSavedSwatches();
 
-        // (4) HUE belongs with color picking, so it lives in this card
-        SleekSlider AddSlider(CardPanel parent, string name, int top, out Label valueLabel, out Label sectionLabel)
-        {
-            sectionLabel = MakeSectionLabel(name, CARD_PAD, top);
-            parent.Controls.Add(sectionLabel);
-            valueLabel = new Label
-            {
-                Left = parent.Width - CARD_PAD - 60, Top = top, Width = 60, Height = LABEL_H,
-                TextAlign = ContentAlignment.MiddleRight, ForeColor = Theme.Subtle, Font = Theme.UiFont(9f),
-                Anchor = AnchorStyles.Top | AnchorStyles.Right
-            };
-            parent.Controls.Add(valueLabel);
-            var slider = new SleekSlider
-            {
-                Left = CARD_PAD, Top = top + LABEL_H + LABEL_GAP, Width = innerW, Height = SLIDER_H,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
-            };
-            parent.Controls.Add(slider);
-            return slider;
-        }
-
-        _hueBar = AddSlider(colorCard, "HUE", cy, out _hueValue, out _);
+        _hueBar = AddInlineSlider(_colorCard, "Hue", 0, inner, out _hueValue, out _hueLabel);
         _hueBar.Minimum = 0; _hueBar.Maximum = 360; _hueBar.RainbowTrack = true;
         _hueBar.Value = (int)_currentColor.GetHue();
         _hueBar.ValueChanged += (_, _) =>
@@ -833,92 +823,232 @@ public class MainForm : Form
         };
         _hueValue.Text = $"{_hueBar.Value}°";
 
-        // Shown (top-right of the COLOR card) when the effect generates its own colours, while
-        // the swatch grid / hue / action row are disabled — the pickers stay visible but greyed
-        // so it's clear they don't apply, without collapsing the card (no window resize).
-        _autoColorNote = new Label
-        {
-            // Top 11: sits the note's baseline on the COLOR title's baseline (9 rode 2px high)
-            Text = "colours automatic", Left = CARD_PAD, Top = 11, Width = colorCard.Width - 2 * CARD_PAD, Height = LABEL_H,
-            TextAlign = ContentAlignment.MiddleRight, ForeColor = Theme.Subtle, Font = Theme.UiFont(8.5f),
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, Visible = false
-        };
-        colorCard.Controls.Add(_autoColorNote);
-        _autoColorNote.BringToFront();
-
-        // ---------------- TUNING card (speed + brightness) ----------------
-        var tuningCard = AddCard("TUNING", LABEL_H + LABEL_GAP + SLIDER_H + 12 + LABEL_H + LABEL_GAP + SLIDER_H);
-
-        _speedBar = AddSlider(tuningCard, "SPEED", CARD_TOP, out _speedValue, out _speedLabel);
-        _speedBar.Value = Math.Clamp(_settings.Speed, 1, 100);
-        _speedBar.ValueChanged += (_, _) => { _speedValue.Text = $"{_speedBar.Value}%"; SaveSoon(); };
-        _speedValue.Text = $"{_speedBar.Value}%";
-
-        _brightBar = AddSlider(tuningCard, "BRIGHTNESS", CARD_TOP + LABEL_H + LABEL_GAP + SLIDER_H + 12, out _brightValue, out _brightLabel);
-        _brightBar.Value = Math.Clamp(_settings.Brightness, 1, 100);
-        _brightBar.ValueChanged += (_, _) => { _brightValue.Text = $"{_brightBar.Value}%"; SaveSoon(); };
-        _brightValue.Text = $"{_brightBar.Value}%";
-        // Brightness sits below SPEED normally; when SPEED is hidden (motionless effects) it
-        // takes SPEED's slot and the card SHRINKS to match (it's the last card in the stack, so
-        // nothing below it moves) — keeping the vacated space read as a half-empty card.
-        _sliderYOff = LABEL_H + LABEL_GAP;
-        _brightTopHi = CARD_TOP + LABEL_H + LABEL_GAP + SLIDER_H + 12;
-        _brightTopLo = CARD_TOP;
-        _tuningCard = tuningCard;
-        _tuningHFull = tuningCard.Height;
-        _tuningHSolo = tuningCard.Height - (LABEL_H + LABEL_GAP + SLIDER_H + 12);
-
-        // ---------------- LIVE PREVIEW card (left column) ----------------
-        // Moved out of the right stack into what used to be empty space under the device list:
-        // it fills that dead zone AND lets the whole window get much shorter. Small fixed height,
-        // positioned by LayoutLeftColumn (Top|Left anchored — the initial bounds here are provisional).
-        int prevTop = 12 + devicesCard.Height + CARD_GAP;
-        int prevBottom = _rescanButton.Top - CARD_GAP;
-        var previewCard = new CardPanel
-        {
-            Title = "LIVE PREVIEW", Left = 12, Top = prevTop, Width = 286, Height = prevBottom - prevTop,
-            Anchor = AnchorStyles.Top | AnchorStyles.Left // small fixed height; positioned by LayoutLeftColumn
-        };
-        left.Controls.Add(previewCard);
-        _previewCard = previewCard;
+        // ---------------- the LIVE stage: the lights' own colours, as large as the space allows
+        _stageCard = AddSection("LIVE PREVIEW");
+        _stageCard.CaptionInClassicOnly = true;
         _preview = new LivePreview
         {
-            Left = CARD_PAD, Top = CARD_TOP, Width = previewCard.Width - 2 * CARD_PAD,
-            Height = previewCard.Height - CARD_TOP - CARD_GAP,
-            Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right
+            Left = CardPanel.SectionPad, Top = 0, Width = inner, Height = 80,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
         };
-        previewCard.Controls.Add(_preview);
+        _stageCard.Controls.Add(_preview);
+
+        // ---------------- TUNING, docked at the bottom: brightness never jumps when speed is blocked
+        _tuningCard = AddSection("TUNING");
+        _speedBar = AddInlineSlider(_tuningCard, "Speed", CardPanel.SectionTop, inner, out _speedValue, out _speedLabel);
+        _speedBar.Value = Math.Clamp(_settings.Speed, 1, 100);
+        _speedBar.ValueChanged += (_, _) => { _speedValue.Text = $"{_speedBar.Value}%"; LookEdited(); SaveSoon(); };
+        _speedValue.Text = $"{_speedBar.Value}%";
+        _brightBar = AddInlineSlider(_tuningCard, "Brightness", CardPanel.SectionTop + RowH + 8, inner, out _brightValue, out _brightLabel);
+        _brightBar.Value = Math.Clamp(_settings.Brightness, 1, 100);
+        _brightBar.ValueChanged += (_, _) => { _brightValue.Text = $"{_brightBar.Value}%"; LookEdited(); SaveSoon(); UpdateDeck(); };
+        _brightValue.Text = $"{_brightBar.Value}%";
 
         UpdateEffectButtons();
         UpdateSwatchSelection();
         LayoutColumns();
-        // The left column (device card height, preview card, Rescan position) is laid out by
-        // LayoutLeftColumn against the current column height — it must re-run on every resize
-        // too, or a maximize→expand-group→restore leaves the Rescan button below the client edge.
+        _strip.Relayout();
+        // The rail (device list, profiles, footer) is laid out by LayoutLeftColumn against the current
+        // card height; it must re-run on every resize too, or a maximise->expand->restore leaves the
+        // footer below the edge.
         Resize += (_, _) => { LayoutColumns(); if (WindowState != FormWindowState.Minimized) LayoutLeftColumn(); };
     }
 
-    private const int LEFT_COL_W = 310;   // devices column
-    private const int RIGHT_COL_MAX = 892; // cards stop growing past this (cardW 880)
-    private int _colOffset = -1;          // last horizontal centering offset applied
+    // ---- shell metrics (Mixtape's): the cards float 14 px from every edge and from each other ----
+    private const int GAP = 14;           // between the cards and to every window edge
+    private const int RAIL_W = 300;       // the rail card
+    private const int PAD = 22;           // the content card's page inset (Mixtape: 22 everywhere)
+    private const int BLOCK_MAX = 1202;   // maximised: rail + content stop growing and the block centres
+    private const int RowH = 32;          // an inline slider row
+    private const int MIN_CW = 920, MIN_CH = 780, DEF_CH = 800;   // client sizes
+    private const int MIN_CH_CLASSIC = 804;   // the 95 group boxes (stage caption + padding) need 24 px more
+    private static int MinClientH => Theme.Classic ? MIN_CH_CLASSIC : MIN_CH;
+    private int _blockLeft = -1, _blockTop = -1;   // last placement, so moves repaint their wallpaper slice
 
-    /// <summary>On wide windows the content would stretch comically; instead the card
-    /// column caps at RIGHT_COL_MAX and the whole content block centers, letting the
-    /// gradient backdrop breathe at the sides (the macOS Settings "max content width"
-    /// pattern). At or below the design width this is a no-op.</summary>
+    /// <summary>The outer window size whose client our WM_NCCALCSIZE leaves at <paramref name="client"/>
+    /// (side and bottom frame only - the caption is removed).</summary>
+    internal static Size OuterSizeFor(Size client)
+    {
+        int fx = GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+        int fy = GetSystemMetrics(SM_CYFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+        return new Size(client.Width + 2 * fx, client.Height + fy);
+    }
+
+    /// <summary>The device list's back colour: opaque (an AutoScroll panel cannot be transparent), so it
+    /// is re-asserted after every skin change instead of being remapped (RailBg is never baked).</summary>
+    private static Color DeviceListBack => Theme.Classic ? Color.White : Theme.RailBg;
+
+    /// <summary>Places the rail and the content card: the content card runs to the right edge, 14 px
+    /// in, like the strip above it. Only a MAXIMISED window caps the block at BLOCK_MAX and centres it,
+    /// letting the wallpaper breathe at the sides of a wide screen.</summary>
     private void LayoutColumns()
     {
         if (WindowState == FormWindowState.Minimized || _rightCol == null) return;
-        int rightW = Math.Min(ClientSize.Width - LEFT_COL_W, RIGHT_COL_MAX);
-        int offset = Math.Max(0, (ClientSize.Width - LEFT_COL_W - rightW) / 2);
-        _leftCol.Left = offset;
-        _rightCol.SetBounds(offset + LEFT_COL_W, _rightCol.Top, rightW, _rightCol.Height);
-        _headerCard.SetBounds(offset + 12, _headerCard.Top, LEFT_COL_W + rightW - 24, _headerCard.Height);
-        if (offset != _colOffset)
+        int W = ClientSize.Width, H = ClientSize.Height;
+        bool maxed = IsHandleCreated ? IsZoomed(Handle) : WindowState == FormWindowState.Maximized;
+        int full = W - (GAP + RAIL_W + GAP) - GAP;
+        int contentW = Math.Max(300, maxed ? Math.Min(full, BLOCK_MAX - RAIL_W - GAP) : full);
+        int x0 = maxed ? Math.Max(GAP, (W - (RAIL_W + GAP + contentW)) / 2) : GAP;
+        int top = TitleStrip.TopH, h = Math.Max(200, H - top - GAP);
+        _leftCol.SetBounds(x0, top, RAIL_W, h);
+        _rightCol.SetBounds(x0 + RAIL_W + GAP, top, contentW, h);
+        LayoutContent();
+        if (x0 != _blockLeft || top != _blockTop)
         {
-            _colOffset = offset;
-            Invalidate(true); // panels moved: repaint their slice of the shared backdrop
+            _blockLeft = x0; _blockTop = top;
+            Invalidate(true); // panels moved: repaint their slice of the shared wallpaper
         }
+    }
+
+    /// <summary>Stacks the content card: EFFECTS and COLOR from the top, TUNING docked at the bottom, the
+    /// LIVE stage taking what is left between them (48..240 px; any extra space falls above the dock).</summary>
+    private void LayoutContent()
+    {
+        if (_rightCol == null || _tuningCard == null) return;
+        const int SectionGap = 16;                              // + the 10 px section bottom pad = 26 px rhythm
+        bool c95 = Theme.Classic;
+        // Classic: the cards are invisible (plain face), so the group boxes share the rail's geometry -
+        // 2 px in, frame lines from y 12 - and line up with the Devices box beside them
+        int secX = c95 ? 2 : PAD - CardPanel.SectionPad;
+        int H = _rightCol.Height, secW = c95 ? _rightCol.Width - 4 : _rightCol.Width - 2 * (PAD - CardPanel.SectionPad);
+        int y = c95 ? 12 : PAD - 6;                              // modern: caption glyphs land on the 22 px page inset
+
+        LayoutEffectTiles();
+        _effectsCard.SetBounds(secX, y, secW, CardPanel.SectionTop + _effectGrid.Height + 10);
+        y = _effectsCard.Bottom + SectionGap;
+
+        LayoutSwatches();
+        _actionRow.Top = _swatchGrid.Bottom + 8;
+        LayoutActionRow();
+        PlaceInlineRow(_hueLabel, _hueBar, _hueValue, _actionRow.Bottom + 10);
+        _colorCard.SetBounds(secX, y, secW, _hueLabel.Bottom + 10);
+        y = _colorCard.Bottom + SectionGap;
+
+        int dockH = CardPanel.SectionTop + RowH + 8 + RowH + 10;
+        // Classic: the Tuning box ends where the rail's Rescan button does (14 px above the edge)
+        int dockTop = H - (c95 ? 14 : PAD - 10) - dockH;
+        _tuningCard.SetBounds(secX, dockTop, secW, dockH);
+        _rightCol.RuleY = c95 ? -1 : dockTop - SectionGap / 2;
+
+        int stageTop0 = c95 ? CardPanel.SectionTop : 0;              // Classic: a captioned group box
+        // the stage is the flexible part: below 48 px of room it shrinks rather than run into the dock
+        int room = dockTop - SectionGap - y - stageTop0 - 10;
+        int stageH = Math.Clamp(room, Math.Min(48, Math.Max(16, room)), 240);
+        _stageCard.SetBounds(secX, y, secW, stageTop0 + stageH + (c95 ? 10 : 0));
+        _preview.SetBounds(CardPanel.SectionPad, stageTop0, secW - 2 * CardPanel.SectionPad, stageH);
+
+        // The Applies-to chip and the auto-colour note: on the caption band in the modern look; inside
+        // the 95 group box (under its frame line, above the wells) in Classic - only the caption may
+        // break a group box's frame.
+        int noteW = Math.Min(secW - 2 * CardPanel.SectionPad, 280);
+        _targetButton.Width = Math.Min(noteW, ChipWidth(_targetButton.Text));
+        if (c95)
+        {
+            _targetButton.SetBounds(secW - 8 - _targetButton.Width, 9, _targetButton.Width, 18);
+            _autoColorNote.SetBounds(secW - 8 - noteW, 9, noteW, 18);
+        }
+        else
+        {
+            _targetButton.SetBounds(secW - CardPanel.SectionPad - _targetButton.Width + 4, 0, _targetButton.Width, 22);
+            _autoColorNote.SetBounds(secW - CardPanel.SectionPad - noteW, 0, noteW, 22);
+        }
+    }
+
+    private static int ChipWidth(string text) =>
+        TextRenderer.MeasureText(text, Theme.UiFontShared(8.75f), Size.Empty, TextFormatFlags.NoPadding).Width + 20;
+
+    /// <summary>Lays the effect tiles out: 3 columns in a narrow card, 4 from 720 px. Returns whether
+    /// the grid's height changed (the caller then re-stacks the card).</summary>
+    private bool LayoutEffectTiles()
+    {
+        int w = _effectGrid.Width, n = _effectButtons.Count;
+        if (w <= 0 || n == 0) return false;
+        const int TileH = 40, Gap = 8;
+        int cols = w < 720 ? 3 : 4, rows = (n + cols - 1) / cols;
+        int baseW = (w - Gap * (cols - 1)) / cols, rem = (w - Gap * (cols - 1)) % cols;
+        for (int i = 0; i < n; i++)
+        {
+            int c = i % cols, r = i / cols;
+            int x = c * (baseW + Gap) + Math.Min(c, rem);
+            _effectButtons[i].SetBounds(x, r * (TileH + Gap), baseW + (c < rem ? 1 : 0), TileH);
+        }
+        int h = rows * TileH + (rows - 1) * Gap;
+        if (_effectGrid.Height == h) return false;
+        _effectGrid.Height = h;
+        return true;
+    }
+
+    /// <summary>Square colour wells in a 10-column grid: the side follows the column width up to 52 px;
+    /// past that the gaps grow, so the row still spans the full width. Saved colours get their own row.</summary>
+    private bool LayoutSwatches()
+    {
+        int w = _swatchGrid.Width;
+        if (w <= 0) return false;
+        const int MinGap = 8, Max = 52;
+        int side = Math.Min(Max, (w - MinGap * (SwatchCols - 1)) / SwatchCols);
+        double pitch = SwatchCols > 1 ? (w - side) / (double)(SwatchCols - 1) : 0;
+        void Row(List<RoundedButton> wells, int y)
+        {
+            for (int i = 0; i < wells.Count; i++)
+                wells[i].SetBounds((int)Math.Round(i * pitch), y, side, side);
+        }
+        Row(_swatchButtons, 0);
+        Row(_savedSwatchButtons, side + MinGap);
+        int h = _savedSwatchButtons.Count > 0 ? side * 2 + MinGap : side;
+        if (_swatchGrid.Height == h) return false;
+        _swatchGrid.Height = h;
+        return true;
+    }
+
+    /// <summary>Custom… / ＋ Save color / Gradient end at their natural widths, left-aligned; the
+    /// gradient-end button only for the Gradient effect.</summary>
+    private void LayoutActionRow()
+    {
+        int x = 0;
+        foreach (var b in new[] { _customBtn, _saveBtn, _gradientBtn })
+        {
+            if (b == _gradientBtn && !_gradientShown) continue;
+            var f = Theme.UiFontShared(9.5f, FontStyle.Bold);
+            int w = Math.Max(96, TextRenderer.MeasureText(b.Text, f, Size.Empty, TextFormatFlags.NoPadding).Width + 28
+                + (Theme.Classic && b.Variant == RoundedButton.Look.Swatch ? 22 : 0));   // the 95 colour square
+            b.SetBounds(x, 0, w, 30);
+            x += w + 8;
+        }
+    }
+
+    /// <summary>An inline slider row: caption in a fixed 92 px column, the track, and the value
+    /// right-aligned in the last 48 px - every row shares the columns, so the tracks line up.</summary>
+    private SleekSlider AddInlineSlider(CardPanel parent, string caption, int top, int inner, out InlineLabel value, out InlineLabel label)
+    {
+        // InlineLabel draws without GDI's side padding, so the ink sits exactly on the section inset
+        // (and the value's right edge on the far one); Classic adds the ':' and draws them black
+        label = new InlineLabel
+        {
+            Caption = true, Text = caption, TextAlign = ContentAlignment.MiddleLeft, Left = CardPanel.SectionPad,
+            Width = 92, Height = RowH, Top = top, ForeColor = Theme.Subtle,
+            Font = Theme.UiFont(9.25f),
+        };
+        parent.Controls.Add(label);
+        value = new InlineLabel
+        {
+            TextAlign = ContentAlignment.MiddleRight, Left = CardPanel.SectionPad + inner - 48,
+            Width = 48, Height = RowH, Top = top, ForeColor = Theme.Faint,
+            Font = Theme.UiFont(8.75f), Anchor = AnchorStyles.Top | AnchorStyles.Right,
+        };
+        parent.Controls.Add(value);
+        var slider = new SleekSlider
+        {
+            Left = CardPanel.SectionPad + 92, Top = top + (RowH - 24) / 2, Width = inner - 92 - 56, Height = 24,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+        };
+        parent.Controls.Add(slider);
+        return slider;
+    }
+
+    private static void PlaceInlineRow(Label label, SleekSlider slider, Label value, int top)
+    {
+        label.Top = value.Top = top;
+        slider.Top = top + (RowH - 24) / 2;
     }
 
     private static Label MakeSectionLabel(string text, int x, int y) => new()
@@ -927,13 +1057,38 @@ public class MainForm : Form
         ForeColor = Theme.Accent, Font = Theme.UiFont(9f, FontStyle.Bold)
     };
 
-    /// <summary>A square colour tile for the swatch grid (preset or saved). Dock-fills its
-    /// grid cell; the caller's Margin supplies the inter-tile gutter.</summary>
-    private static RoundedButton MakeSwatch(Color c, Padding margin) => new()
+    /// <summary>A colour well for the swatch grid (preset or saved); LayoutSwatches sizes it square.</summary>
+    private static RoundedButton MakeSwatch(Color c) => new()
     {
-        Dock = DockStyle.Fill, CornerRadius = 8, Margin = margin,
+        Variant = RoundedButton.Look.Well, CornerRadius = 8, Width = 46, Height = 46,
         FillColor = c, HoverFillColor = c, Tag = c
     };
+
+    /// <summary>The colour picker, for the current colour target (COLOR > Custom..., the deck tile).</summary>
+    private void PickColour()
+    {
+        using var dlg = new ColorPickerDialog(ActivePickColor);
+        if (dlg.ShowDialog(this) == DialogResult.OK) SetColor(dlg.SelectedColor);
+    }
+
+    private void OpenSettings()
+    {
+        SaveNow(); // flush live effect/colour so the Commands tab copies the current look
+        using var dlg = new SettingsForm(_settings, ApplySettingsChanged);
+        dlg.ShowDialog(this);
+    }
+
+    /// <summary>Pushes the current look into the strip's deck card: effect art + name, brightness, and
+    /// a tile tooltip that says what a click will actually do.</summary>
+    private void UpdateDeck()
+    {
+        if (_deck == null || _brightBar == null) return;
+        _deck.SetLook(_effect, ActivePickColor, Color.FromArgb(_settings.GradientEndArgb), EffectLabel(_effect), _brightBar.Value);
+        string? target = _colorTarget == null ? null : _deviceRows.FirstOrDefault(r => r.Key == _colorTarget)?.Device.Name;
+        bool selfColouring = _effect is Effect.RainbowWave or Effect.ColorCycle or Effect.Fire or Effect.Ambient or Effect.Surprise;
+        string pick = target != null ? $"Pick a color for {target}…" : "Pick a color…";
+        _deck.TileTip = selfColouring ? pick + " (switches to Static color)" : pick;
+    }
 
     private static RoundedButton MakeButton(string text, int x, int y, int w, int h) => new()
     {
@@ -944,6 +1099,7 @@ public class MainForm : Form
 
     private void SelectEffect(Effect effect)
     {
+        if (_applyingProfile == 0 && _appliedProfile != null && effect != _effect) MarkAppliedProfile(null); // a manual change: no longer that profile's look
         _effect = effect;
         UpdateEffectButtons();
         UpdateTrayText();
@@ -1085,7 +1241,9 @@ public class MainForm : Form
             var p = Marshal.PtrToStructure<NCCALCSIZE_PARAMS>(m.LParam);
             int fx = GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
             int fy = GetSystemMetrics(SM_CYFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
-            bool maxed = WindowState == FormWindowState.Maximized;
+            // IsZoomed, not WindowState: WinForms refreshes its cached state only AFTER this message, so a
+            // native maximise (double-click, snap, drag-restore) would otherwise get the old answer.
+            bool maxed = IsZoomed(Handle);
             p.Proposed.Left += fx;
             p.Proposed.Right -= fx;
             p.Proposed.Bottom -= fy;
@@ -1093,6 +1251,29 @@ public class MainForm : Form
             Marshal.StructureToPtr(p, m.LParam, false);
             m.Result = IntPtr.Zero;
             return;
+        }
+        // The custom title strip: children answer HTTRANSPARENT over empty strip, so the hit lands here
+        // as HTCLIENT; turn it into HTCAPTION (native drag / snap / double-click maximise) and give the
+        // top edge back its resize band, which removing the caption took away.
+        if (m.Msg == WM_NCHITTEST && _strip != null)
+        {
+            base.WndProc(ref m);
+            if ((int)m.Result != HTCLIENT) return;
+            // never m.LParam: negative multi-monitor coordinates overflow the int conversion
+            m.Result = (IntPtr)ClientHitCode(PointToClient(Cursor.Position));
+            return;
+        }
+        // Right-click on the strip: Prisma's quick menu, as the old header had (Alt+Space and Shift+F10
+        // still open the Windows system menu - they arrive with lParam == -1).
+        if (m.Msg == WM_CONTEXTMENU && _strip != null && m.LParam != (IntPtr)(-1))
+        {
+            long lp = m.LParam.ToInt64();
+            var screen = new Point((short)(lp & 0xFFFF), (short)((lp >> 16) & 0xFFFF));
+            var pt = PointToClient(screen);
+            // wParam == the form: the press landed on the form surface itself (the gaps, the caption
+            // band, the deck body); a strip child's message bubbles up with its own hwnd. Rail and
+            // content children lie outside the strip and open their own menus - never a second one.
+            if (m.WParam == Handle || _strip.Bounds.Contains(pt)) { ShowBackgroundMenu(this, pt); return; }
         }
         if (m.Msg == WM_HOTKEY)
         {
@@ -1127,9 +1308,10 @@ public class MainForm : Form
         UnregisterHotKey(Handle, HK_PROFILE);
         UnregisterHotKey(Handle, HK_RESCAN);
         if (!_settings.GlobalHotkeys) return;
-        bool ok = RegisterHotKey(Handle, HK_LIGHTS, MOD_CONTROL | MOD_ALT, (uint)Keys.L);
-        ok &= RegisterHotKey(Handle, HK_PROFILE, MOD_CONTROL | MOD_ALT, (uint)Keys.P);
-        ok &= RegisterHotKey(Handle, HK_RESCAN, MOD_CONTROL | MOD_ALT, (uint)Keys.R);
+        const uint MOD_NOREPEAT = 0x4000;   // a held hotkey fires once, never a burst of device writes
+        bool ok = RegisterHotKey(Handle, HK_LIGHTS, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, (uint)Keys.L);
+        ok &= RegisterHotKey(Handle, HK_PROFILE, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, (uint)Keys.P);
+        ok &= RegisterHotKey(Handle, HK_RESCAN, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, (uint)Keys.R);
         if (!ok) SetStatus("Some global hotkeys (Ctrl+Alt+L/P/R) are in use by another app", error: true);
     }
 
@@ -1272,15 +1454,14 @@ public class MainForm : Form
         foreach (var btn in _effectButtons)
         {
             bool selected = (Effect)btn.Tag! == _effect;
-            btn.Latched = selected;   // Classic draws this as a held-down toolbar button
-            btn.FillColor = selected ? Theme.AccentDim : Theme.RowBg;
-            btn.HoverFillColor = selected ? Theme.AccentDim : Theme.RowHover;
-            btn.ForeColor = selected ? Color.White : Theme.TextCol;
-            btn.BorderColor = selected ? Theme.Accent : Theme.Border;
+            btn.Selected = selected;  // Modern: accent wash, resolved at paint time (never a baked colour)
+            btn.Latched = selected;   // Classic: a held-down toolbar button
             btn.Invalidate();
         }
         UpdateHeaderButtons();
         UpdateContextualControls();
+        UpdateDeviceChips();
+        UpdateDeck();
     }
 
     /// <summary>Shows only the controls the current effect actually uses: the SPEED slider is
@@ -1290,16 +1471,35 @@ public class MainForm : Form
     private void UpdateContextualControls()
     {
         if (_speedBar == null || _actionRow == null) return;
-        bool usesSpeed = _effect is not (Effect.Static or Effect.Off or Effect.Gradient);
-        _speedLabel.Visible = _speedValue.Visible = _speedBar.Visible = usesSpeed;
-        int top = usesSpeed ? _brightTopHi : _brightTopLo;
-        _brightLabel.Top = _brightValue.Top = top;
-        _brightBar.Top = top + _sliderYOff;
-        _tuningCard.Height = usesSpeed ? _tuningHFull : _tuningHSolo; // reclaim the hidden row's space
+        // SPEED is BLOCKED rather than hidden when nothing lit uses it: it stays in its row (nothing
+        // reflows, brightness never jumps), reads as not-in-use, and its tooltip says why. It is read
+        // per device: a row with its own effect may still animate, and Gradient sweeps A->B->A on a
+        // single-LED device (the GPU) at this speed. Blocked keeps the slider enabled, so the tooltip
+        // on its faded track works (a disabled child window never sees the hover).
+        var lit = _deviceRows.Where(r => r.Checked).ToList();
+        bool usesSpeed = lit.Count == 0 ? UsesSpeed(_effect, 2) : lit.Any(r => UsesSpeed(RowEffect(r), r.Device.LedCount));
+        _speedBar.Blocked = !usesSpeed;
+        _speedLabel.Blocked = !usesSpeed;
+        _speedValue.Visible = usesSpeed;
+        _speedLabel.Text = _effect == Effect.Music ? "Sensitivity" : "Speed";   // Music reads SPEED as sensitivity
+        string why = usesSpeed
+            ? _effect == Effect.Gradient ? "Sweep speed for single-LED devices" : ""
+            : _effect switch
+            {
+                Effect.Ambient => "Screen sync follows the screen; speed is not used",
+                Effect.Gradient => "Gradient is a fixed blend on multi-LED devices",
+                Effect.Off => "The lights are off",
+                _ => $"{EffectLabel(_effect)} has no speed",
+            };
+        _tips.SetToolTip(_speedBar, why); _tips.SetToolTip(_speedLabel, why);
 
         bool usesGradientEnd = _effect == Effect.Gradient;
-        if (_gradientBtn.Visible != usesGradientEnd || _actionRow.ColumnCount != (usesGradientEnd ? 3 : 2))
-            SetActionRowColumns(usesGradientEnd);
+        if (_gradientShown != usesGradientEnd || _gradientBtn.Visible != usesGradientEnd && Visible)
+        {
+            _gradientShown = usesGradientEnd;
+            _gradientBtn.Visible = usesGradientEnd;
+            LayoutActionRow();
+        }
 
         // Self-colouring effects ignore the pickers — grey them out (no collapse/resize) + note.
         // The target dropdown greys too: it only scopes colour picks, which are inert here.
@@ -1310,26 +1510,22 @@ public class MainForm : Form
         bool autoColor = _effect is Effect.RainbowWave or Effect.ColorCycle or Effect.Fire or Effect.Ambient or Effect.Surprise;
         _swatchGrid.Enabled = _hueBar.Enabled = _hueValue.Enabled = _actionRow.Enabled = !autoColor;
         _targetButton.Enabled = !autoColor;
+        _targetButton.Visible = !autoColor;   // the note takes the chip's place on the caption band
+        // ...but it must not hide WHICH device the pickers would act on
+        string? target = _colorTarget == null ? null : _deviceRows.FirstOrDefault(r => r.Key == _colorTarget)?.Device.Name;
+        _autoColorNote.Text = target == null ? "Colors are automatic for this effect" : $"Automatic colors · target: {target}";
         _autoColorNote.Visible = autoColor;
+        _hueLabel.Blocked = autoColor;
     }
 
-    /// <summary>Rebuilds the COLOR action row as 3 columns (Custom / Save / Gradient-end) or 2
-    /// (Custom / Save) so hiding the gradient button lets the other two fill the width instead
-    /// of leaving a blank third slot. Margins stay a uniform half-gutter (the row over-hangs the
-    /// card pad by 3px each side), so every button is the same width.</summary>
-    private void SetActionRowColumns(bool withGradient)
+    /// <summary>Whether an effect reads the SPEED slider on a device with <paramref name="leds"/> LEDs.
+    /// Screen sync shares Static's fixed-rate fade; Gradient only moves on a single LED.</summary>
+    private static bool UsesSpeed(Effect e, int leds) => e switch
     {
-        _actionRow.SuspendLayout();
-        _actionRow.Controls.Clear();
-        int cols = withGradient ? 3 : 2;
-        _actionRow.ColumnCount = cols;
-        EqualizeColumns(_actionRow);
-        _actionRow.Controls.Add(_customBtn, 0, 0);
-        _actionRow.Controls.Add(_saveBtn, 1, 0);
-        _gradientBtn.Visible = withGradient;
-        if (withGradient) _actionRow.Controls.Add(_gradientBtn, 2, 0);
-        _actionRow.ResumeLayout();
-    }
+        Effect.Static or Effect.Off or Effect.Ambient => false,
+        Effect.Gradient => leds <= 1,
+        _ => true,
+    };
 
     /// <summary>Percent columns dump the integer remainder on the LAST column (the 3rd effect
     /// tile rendered 8px wider than its siblings, the last swatch 2px). Absolute widths with the
@@ -1358,12 +1554,12 @@ public class MainForm : Form
     private void UpdateHeaderButtons()
     {
         if (_lightsBtn == null) return;
-        _lightsBtn.ForeColor = _effect == Effect.Off ? Theme.Subtle : Theme.Accent;
-        _screenBtn.ForeColor = _effect == Effect.Ambient ? Theme.Accent : Theme.TextCol;
-        _pinBtn.ForeColor = TopMost ? Theme.Accent : Theme.TextCol;
-        _lightsBtn.Invalidate();
-        _screenBtn.Invalidate();
-        _pinBtn.Invalidate();
+        _lightsBtn.On = _effect != Effect.Off;
+        _screenBtn.Active = _effect == Effect.Ambient;
+        _pinBtn.Active = TopMost;
+        // the state in words too, not only in the accent chip
+        _tips.SetToolTip(_screenBtn, _screenBtn.Active ? "Screen sync: on — click to turn off" : "Screen sync: off — click to turn on");
+        _tips.SetToolTip(_pinBtn, TopMost ? "Keep window on top: on" : "Keep window on top: off");
     }
 
     /// <summary>Swap the caption maximise/restore glyph + tooltip to match the window state.</summary>
@@ -1371,8 +1567,9 @@ public class MainForm : Form
     {
         if (_maxBtn == null) return;
         bool max = WindowState == FormWindowState.Maximized;
-        if (Theme.IconFontName != null) { _maxBtn.Text = max ? "" : ""; _maxBtn.Invalidate(); }
+        _maxBtn.Maximized = max;
         _tips.SetToolTip(_maxBtn, max ? "Restore" : "Maximize");
+        _strip?.Relayout();   // Classic: the 95 frame (and its inset) goes away when maximised
     }
 
     /// <summary>The gradient-end button is its own swatch: filled with the end color,
@@ -1390,6 +1587,7 @@ public class MainForm : Form
 
     private void SetColor(Color c)
     {
+        if (_applyingProfile == 0 && _appliedProfile != null) MarkAppliedProfile(null);
         if (_colorTarget == null)
         {
             _currentColor = c;
@@ -1431,13 +1629,19 @@ public class MainForm : Form
 
     private void UpdateDeviceChips()
     {
+        var end = Color.FromArgb(_settings.GradientEndArgb);
         foreach (var row in _deviceRows)
         {
             var c = EffectiveColor(row);
-            if (row.DisplayColor.ToArgb() == c.ToArgb()) continue; // chip unchanged; skip the repaint
+            var fx = RowEffect(row);
+            if (row.DisplayColor.ToArgb() == c.ToArgb() && row.ArtEffect == fx && row.ArtEnd.ToArgb() == end.ToArgb())
+                continue; // tile unchanged; skip the repaint
             row.DisplayColor = c;
+            row.ArtEffect = fx;   // the tile shows what the device really runs, not a stale base colour
+            row.ArtEnd = end;
             row.Invalidate();
         }
+        foreach (var grp in _deviceGroups) grp.Invalidate();
     }
 
     private void SetColorTarget(string? key)
@@ -1451,6 +1655,8 @@ public class MainForm : Form
             else label = match.Device.Name;
         }
         _targetButton.Text = $"Applies to: {label}  ▾";
+        _targetButton.Selected = key != null;   // a specific device: accent wash on the chip
+        LayoutContent();
         foreach (var row in _deviceRows) { row.Targeted = key != null && row.Key == key; row.Invalidate(); }
 
         // reflect the target's current color in the hue slider + swatch selection
@@ -1472,7 +1678,7 @@ public class MainForm : Form
     private void ShowTargetMenu()
     {
         var menu = Menus.Build();
-        menu.Items.Add(Menus.Header("Colour applies to"));
+        menu.Items.Add(Menus.Header("Color applies to"));
         menu.Items.Add(Menus.Item("All devices", null, (_, _) => SetColorTarget(null), isChecked: _colorTarget == null));
         if (_deviceRows.Count > 0) menu.Items.Add(new ToolStripSeparator());
         foreach (var row in _deviceRows)
@@ -1503,12 +1709,13 @@ public class MainForm : Form
         for (int i = 0; i < _settings.SavedColors.Count && i < SwatchCols; i++)
         {
             var c = Color.FromArgb(_settings.SavedColors[i]);
-            var sw = MakeSwatch(c, new Padding(4, 0, 4, 0)); // match the preset row's equal half-gutters
+            var sw = MakeSwatch(c);
             sw.Click += (s, _) => SetColor((Color)((RoundedButton)s!).Tag!);
             sw.MouseUp += (s, e) => { if (e.Button == MouseButtons.Right) ShowSwatchMenu((RoundedButton)s!, (Color)((RoundedButton)s!).Tag!, saved: true); };
             _savedSwatchButtons.Add(sw);
-            _swatchGrid.Controls.Add(sw, i, 1);
+            _swatchGrid.Controls.Add(sw);
         }
+        if (LayoutSwatches()) LayoutContent();   // a first / last saved colour adds or drops the second row
         UpdateSwatchSelection();
     }
 
@@ -1522,11 +1729,6 @@ public class MainForm : Form
         OpenRgbRemoteDevice.GpuFollowExternal = _settings.GpuExternalControl;
     }
 
-    /// <summary>Classic puts the wordmark and version on the navy caption band, where the muted
-    /// grey of the modern look would be unreadable.</summary>
-    private void SyncCaptionText() =>
-        _versionLabel.ForeColor = Theme.Classic ? Color.White : Theme.Subtle;
-
     /// <summary>Switches the Windows 95 skin on or off in place. Deliberately NOT a restart (which
     /// is how the sibling apps do it): restarting Prisma re-detects every device, and a fresh SMBus/I2C
     /// probe round is exactly what this app exists to avoid. Restyle carries the baked properties over;
@@ -1536,19 +1738,31 @@ public class MainForm : Form
         if (Theme.Classic == _settings.ClassicSkin) return;
         Theme.SetSkin(_settings.ClassicSkin);
         Backdrop.Invalidate();
-        _headerCard.CaptionStyle = Theme.Classic;
         foreach (Form f in Application.OpenForms.Cast<Form>().ToArray()) Restyle.Apply(f);
-        SyncCaptionText();   // after Restyle: the caption label is white on navy, not a token colour
+        _deviceList.Restyle();                     // the opaque list surfaces: white field / rail, edge, bar
+        _profileList.Restyle();
+        MinimumSize = OuterSizeFor(new Size(MIN_CW, MinClientH));
+        ApplyWindowChrome();
+        Opacity = EffectiveOpacity();              // Classic: always opaque
+        Backdrop.Glass = _settings.GlassEffect && !Theme.Classic;
+        _strip.Relayout();
+        _blockLeft = -1;                           // force the wallpaper-slice repaint
         LayoutColumns();
         if (WindowState != FormWindowState.Minimized) LayoutLeftColumn();
+        FitDeviceRows();
+        UpdateEffectButtons();
+        UpdateSwatchSelection();
+        UpdateGradientButton();                    // Restyle remaps its literal black/white label
+        UpdateContextualControls();
         UpdateTrayIcon();
+        Invalidate(true);
     }
 
     /// <summary>The opacity slider is suspended while liquid glass is on: a layered
     /// (semi-transparent) window breaks the DWM acrylic accent rendering.</summary>
     private double EffectiveOpacity() =>
         Harness && HarnessGhost ? 0.02 :
-        _settings.GlassEffect ? 1.0 : Math.Clamp(_settings.WindowOpacity, 75, 100) / 100.0;
+        Theme.Classic || _settings.GlassEffect ? 1.0 : Math.Clamp(_settings.WindowOpacity, 75, 100) / 100.0;
 
     private void ApplySettingsChanged()
     {
@@ -1578,8 +1792,9 @@ public class MainForm : Form
             _ignoreLogitechApplied = _settings.IgnoreLogitechMouse;
             _ = DetectDevicesAsync();
         }
-        Opacity = EffectiveOpacity();
-        Acrylic.Apply(this, _settings.GlassEffect);
+        ApplyWindowChrome();                       // glass: Modern only
+        Opacity = EffectiveOpacity();              // opacity: Modern only
+        Backdrop.Glass = _settings.GlassEffect && !Theme.Classic;
         _frameTimer.Interval = Math.Max(20, 1000 / Math.Clamp(_settings.FrameRate, 5, 30));
         UpdateEffectButtons();
         UpdateSwatchSelection();
@@ -1593,10 +1808,13 @@ public class MainForm : Form
         foreach (var sw in _swatchButtons.Concat(_savedSwatchButtons))
         {
             bool selected = ((Color)sw.Tag!).ToArgb() == active;
-            sw.BorderColor = selected ? Color.White : Theme.Border;
-            sw.BorderSize = selected ? 2 : 1;
+            if (sw.Selected == selected) continue;
+            sw.Selected = selected;
             sw.Invalidate();
         }
+        // the tiles paint their art from the picked colour, and so does the deck
+        foreach (var t in _effectButtons) t.Invalidate();
+        UpdateDeck();
     }
 
     // ---------------------------------------------------------------- tray
@@ -1692,7 +1910,11 @@ public class MainForm : Form
         if (running != null && _autoProfileActive != running.Name)
         {
             DebugLog.Log($"trigger: '{running.TriggerProcess}' running -> profile '{running.Name}'");
-            _preAutoSnapshot ??= SnapshotCurrent("Before game");
+            if (_preAutoSnapshot == null)
+            {
+                _preAutoSnapshot = SnapshotCurrent("Before game");
+                _preAutoApplied = _appliedProfile;   // restored with the look when the game exits
+            }
             _autoProfileActive = running.Name;
             ApplyProfile(running);
         }
@@ -1702,7 +1924,12 @@ public class MainForm : Form
             _autoProfileActive = null;
             var snapshot = _preAutoSnapshot;
             _preAutoSnapshot = null;
-            if (snapshot != null) ApplyProfile(snapshot);
+            if (snapshot != null)
+            {
+                ApplyProfile(snapshot);
+                MarkAppliedProfile(_preAutoApplied);   // the rail shows the profile that was showing before
+            }
+            _preAutoApplied = null;
         }
     }
 
@@ -1710,7 +1937,7 @@ public class MainForm : Form
 
     /// <summary>Right-click menu on a device row: run a different effect on just this
     /// device, or follow the global selection again.</summary>
-    private void ShowDeviceMenu(DeviceRow row)
+    private void ShowDeviceMenu(DeviceRow row, Point? at = null)
     {
         var menu = Menus.Build();
         menu.Items.Add(Menus.Header(MenuText(row.Device.Name)));
@@ -1718,14 +1945,14 @@ public class MainForm : Form
         menu.Items.Add(Menus.Item(row.Checked ? "Turn off" : "Turn on", "", (_, _) => ToggleDevice(row)));
         menu.Items.Add(new ToolStripSeparator());
 
-        var setColor = new ToolStripMenuItem("Set colour…") { Image = Menus.Dot(EffectiveColor(row)) };
+        var setColor = new ToolStripMenuItem("Set color…") { Image = Menus.Dot(EffectiveColor(row)) };
         setColor.Click += (_, _) =>
         {
             using var dlg = new ColorPickerDialog(EffectiveColor(row));
             if (dlg.ShowDialog(this) == DialogResult.OK) SetDeviceColor(row, dlg.SelectedColor);
         };
         menu.Items.Add(setColor);
-        menu.Items.Add(Menus.Item("Use as colour target", null, (_, _) => SetColorTarget(row.Key), isChecked: _colorTarget == row.Key));
+        menu.Items.Add(Menus.Item("Use as color target", null, (_, _) => SetColorTarget(row.Key), isChecked: _colorTarget == row.Key));
         menu.Items.Add(Menus.Item("Identify (flash)", "", (_, _) => IdentifyDevice(row)));
         menu.Items.Add(new ToolStripSeparator());
 
@@ -1758,7 +1985,7 @@ public class MainForm : Form
         string zones = row.Device.LedCount == 1 ? "1 zone" : $"{row.Device.LedCount} zones";
         menu.Items.Add(Menus.Header($"{zones}  ·  {row.Device.Source}"));
 
-        menu.Show(row, row.PointToClient(Cursor.Position));
+        menu.Show(row, at ?? row.PointToClient(Cursor.Position));
     }
 
     /// <summary>Toggles a device's enable state from the menu (mirrors a checkbox click).</summary>
@@ -1768,8 +1995,10 @@ public class MainForm : Form
         _settings.Devices[row.Key] = row.Checked;
         if (!row.Checked) BlackoutRow(row);
         RefreshDeviceGroups();
+        LookEdited();
         SaveSoon();
         ApplyCurrentEffect();
+        UpdateContextualControls();
     }
 
     /// <summary>Repaints every RAM-group header so its shared circle (all / mixed-dash / off)
@@ -1790,6 +2019,7 @@ public class MainForm : Form
     /// <summary>Sets one device's colour override (independent of the global target).</summary>
     private void SetDeviceColor(DeviceRow row, Color c)
     {
+        LookEdited();
         _settings.DeviceColors[row.Key] = c.ToArgb();
         UpdateDeviceChips();
         UpdateSwatchSelection();
@@ -1825,7 +2055,7 @@ public class MainForm : Form
             foreach (var r in _deviceRows) r.EffectNote = null;
             SelectEffect(effect);
         }));
-        var setColor = new ToolStripMenuItem("Set colour…") { Image = Menus.Dot(_currentColor) };
+        var setColor = new ToolStripMenuItem("Set color…") { Image = Menus.Dot(_currentColor) };
         setColor.Click += (_, _) => PickColorInto(SetColor, ActivePickColor);
         menu.Items.Add(setColor);
         menu.Show(anchor, anchor.PointToClient(Cursor.Position));
@@ -1844,11 +2074,14 @@ public class MainForm : Form
             _settings.GradientEndArgb = color.ToArgb();
             SyncEffectTuning();
             UpdateGradientButton();
+            UpdateSwatchSelection();
+            UpdateDeviceChips();
+            LookEdited();
             SaveSoon();
             if (_effect != Effect.Gradient) SelectEffect(Effect.Gradient);
         }));
         if (!saved)
-            menu.Items.Add(Menus.Item("Save to my colours", "", (_, _) => { SetColor(color); SaveCurrentColor(); }));
+            menu.Items.Add(Menus.Item("Save to my colors", "", (_, _) => { SetColor(color); SaveCurrentColor(); }));
         else
         {
             menu.Items.Add(new ToolStripSeparator());
@@ -1876,7 +2109,7 @@ public class MainForm : Form
         }
         menu.Items.Add(fx);
 
-        var color = new ToolStripMenuItem("Pick colour…") { Image = Menus.Dot(_currentColor) };
+        var color = new ToolStripMenuItem("Pick color…") { Image = Menus.Dot(_currentColor) };
         color.Click += (_, _) => PickColorInto(SetColor, ActivePickColor);
         menu.Items.Add(color);
 
@@ -1900,13 +2133,16 @@ public class MainForm : Form
     private void ShowAboutPanel()
     {
         if (_about is { IsDisposed: false }) { _about.Close(); _about = null; return; }
+        // Clicking the wordmark while About is open: Deactivate already closed it on mouse-down, so
+        // this click must not reopen it - that is the toggle closing it.
+        if (Environment.TickCount64 - _aboutClosedAt < 300) return;
         _about = new AboutPopup(BuildAboutInfo());
         var p = _title.PointToScreen(new Point(0, _title.Height + 2));
         var wa = Screen.FromControl(this).WorkingArea; // keep it on-screen near an edge
         p.X = Math.Max(wa.Left + 8, Math.Min(p.X, wa.Right - _about.Width - 8));
         p.Y = Math.Min(p.Y, wa.Bottom - _about.Height - 8);
         _about.Location = p;
-        _about.FormClosed += (_, _) => _about = null;
+        _about.FormClosed += (_, _) => { _about = null; _aboutClosedAt = Environment.TickCount64; };
         _about.Show(this); // owned, not modal: never interrupts the lighting; Deactivate closes it
     }
 
@@ -1968,8 +2204,11 @@ public class MainForm : Form
         row.EffectNote = _settings.DeviceEffects.TryGetValue(row.Key, out var name) && Enum.TryParse(name, out Effect e)
             ? EffectLabel(e) : null;
         row.Invalidate();
+        LookEdited();
         SaveSoon();
         ApplyCurrentEffect();
+        UpdateDeviceChips();          // the row's tile shows its new effect
+        UpdateContextualControls();   // ...which may (not) use SPEED
     }
 
     // ---------------------------------------------------------------- profiles
@@ -2012,6 +2251,7 @@ public class MainForm : Form
                     _settings.Profiles.Remove((LightingProfile)((ToolStripMenuItem)s!).Tag!);
                     _profileCycle = -1;
                     _settings.Save();
+                    RebuildProfileRows();
                 };
                 del.DropDownItems.Add(d);
             }
@@ -2032,6 +2272,8 @@ public class MainForm : Form
         profile.TriggerProcess = trigger;
         _settings.Profiles.Add(profile);
         _settings.Save();
+        _appliedProfile = name;   // it IS the current look
+        RebuildProfileRows();
         try { _tray.ShowBalloonTip(1500, "Prisma", $"Profile \"{name}\" saved", ToolTipIcon.Info); } catch { }
     }
 
@@ -2052,6 +2294,14 @@ public class MainForm : Form
     private void ApplyProfile(LightingProfile p)
     {
         DebugLog.Log($"apply profile '{p.Name}'");
+        _applyingProfile++;
+        try { ApplyProfileCore(p); }
+        finally { _applyingProfile--; }
+        MarkAppliedProfile(p.Name);
+    }
+
+    private void ApplyProfileCore(LightingProfile p)
+    {
         _colorTarget = null;
         SetColor(Color.FromArgb(p.ColorArgb));                          // global color (syncs hue bar + preview)
         _settings.DeviceColors = new Dictionary<string, int>(p.DeviceColors); // then restore per-device overrides
@@ -2099,7 +2349,7 @@ public class MainForm : Form
             Text = $"Profile {_settings.Profiles.Count + 1}"
         };
         tb.SelectAll();
-        dlg.Controls.Add(new Label
+        dlg.Controls.Add(new CrispLabel
         {
             Text = "Auto-activate while this app is running (optional):",
             Left = 18, Top = 58, AutoSize = true, ForeColor = Theme.Subtle, Font = Theme.UiFont(8.5f)
@@ -2286,13 +2536,16 @@ public class MainForm : Form
                             "modern" => false,
                             _ => !_settings.ClassicSkin,
                         };
-                        if (classic != _settings.ClassicSkin)
+                        if (classic != Theme.Classic)   // the skin actually showing, not just the saved one
                         {
                             _settings.ClassicSkin = classic;
                             ApplySettingsChanged();
                         }
                         any = true;
                     }
+                    break;
+                case "--hitmap" when Harness: // design harness: paint what a press does everywhere
+                    if (i + 1 < t.Length) { WriteHitMap(t[++i]); any = true; }
                     break;
                 case "--expand-groups": // test harness: toggle every device group (screenshot the expanded list)
                     foreach (var grp in _deviceGroups)
@@ -2473,19 +2726,23 @@ public class MainForm : Form
                 Key = rowKey,
                 DisplayColor = _settings.DeviceColors.TryGetValue(rowKey, out int argb) ? Color.FromArgb(argb) : _currentColor
             };
-            row.CheckedChanged += (_, _) => { SaveSoon(); ApplyCurrentEffect(); };
+            row.CheckedChanged += (_, _) => { LookEdited(); SaveSoon(); ApplyCurrentEffect(); UpdateContextualControls(); };
             row.EffectNote = _settings.DeviceEffects.TryGetValue(rowKey, out var fxName) && Enum.TryParse(fxName, out Effect fx)
                 ? EffectLabel(fx) : null;
             row.MouseUp += (s, e) => { if (e.Button == MouseButtons.Right) ShowDeviceMenu((DeviceRow)s!); };
+            row.MenuKeyRequested += (s, _) => { var r = (DeviceRow)s!; ShowDeviceMenu(r, new Point(DeviceRowArt.NameX, r.Height)); };
             _tips.SetToolTip(row, $"{device.Name}\n{device.LedCount} zone{(device.LedCount == 1 ? "" : "s")} via {device.Source}\nRight-click: choose an effect for just this device");
             _deviceRows.Add(row);
         }
         PopulateDevicePanel(); // groups runs of identical devices (e.g. the 4 RAM sticks)
-        _devicePanel.AutoScrollPosition = new Point(0, 0);
+        _deviceList.ScrollToTop();
         FitDeviceRows();
         // a targeted device may be gone after a rescan; re-apply target (resets to All if missing)
         if (_colorTarget != null && !_deviceRows.Any(r => r.Key == _colorTarget)) _colorTarget = null;
         SetColorTarget(_colorTarget);
+        _ambientArtShown = 0;         // fresh rows have no sampled colour yet: the next frame pushes it
+        UpdateDeviceChips();          // fresh rows: their tiles show the effect each one really runs
+        UpdateContextualControls();   // ...and SPEED follows the new device set
         UpdateTrayText();
         NotifyDeviceChanges();
 
@@ -2607,7 +2864,9 @@ public class MainForm : Form
         _status.Text = text;
         _status.ForeColor = error ? Theme.ErrorCol : Theme.Subtle;
         _statusDot.ForeColor = error ? Theme.ErrorCol : Theme.Accent;
+        PlaceStatusDot();
         _tips.SetToolTip(_status, text); // full text on hover when ellipsized
+        _deck?.SetStatus(text, error);   // the deck's second line mirrors it (ellipsised; full text in the rail)
     }
 
     /// <summary>Sizes device rows to the flow panel's client width (minus the default
@@ -2615,16 +2874,22 @@ public class MainForm : Form
     /// vertical scrollbar.</summary>
     private void FitDeviceRows()
     {
-        // Full client width: rows have zero flow margins, so this puts the same 12px inset on
-        // both sides of the card (the old -6 shortfall showed as 12px left / 18px right).
-        int w = _devicePanel.ClientSize.Width;
+        // The list's row width (inside its edge, less its bar when it shows): rows have zero side
+        // margins, so this puts the same 12px inset on both sides of the card.
+        int w = _deviceList.RowWidth;
         if (w < 100) return;
+        int gap = Theme.Classic ? 0 : 4;                 // 95 lists were flush; modern rows breathe
         foreach (var row in _deviceRows)
         {
             int rw = row.InGroup ? w - 16 : w;           // grouped members sit indented under their header
             if (row.Width != rw) row.Width = rw;
-            var m = row.InGroup ? new Padding(16, 0, 0, 5) : new Padding(0, 0, 0, 5);
+            var m = row.InGroup ? new Padding(16, 0, 0, gap) : new Padding(0, 0, 0, gap);
             if (row.Margin != m) row.Margin = m;
+        }
+        foreach (var grp in _deviceGroups)
+        {
+            var m = new Padding(0, 0, 0, gap);
+            if (grp.Margin != m) grp.Margin = m;
         }
         foreach (var grp in _deviceGroups)
             if (grp.Width != w) grp.Width = w;
@@ -2659,8 +2924,10 @@ public class MainForm : Form
                     bool turnOn = !members.All(m => m.Checked);
                     foreach (var m in members) m.SetChecked(turnOn);
                     grp.Invalidate();
+                    LookEdited();
                     SaveSoon();
                     ApplyCurrentEffect();
+                    UpdateContextualControls();
                 };
                 grp.ExpandToggled += (_, _) =>
                 {
@@ -2693,12 +2960,13 @@ public class MainForm : Form
         LayoutLeftColumn();
     }
 
-    /// <summary>Sizes the DEVICES card to its currently-visible rows (tight when a group is
-    /// collapsed, taller when expanded) and lets the LIVE PREVIEW card fill the rest of the
-    /// left column down to the Rescan button — so neither state leaves dead space.</summary>
+    /// <summary>Stacks the rail: DEVICES sized to its visible rows (tight when a group is collapsed,
+    /// taller when expanded), PROFILES under it, the status footer at the bottom. When everything
+    /// cannot fit, both lists scroll on their own bars: PROFILES gives way first (to two rows), then
+    /// the device list (to one row), then PROFILES to its last row - it never runs into the footer.</summary>
     private void LayoutLeftColumn()
     {
-        if (_devicesCard == null || _previewCard == null) return;
+        if (_devicesCard == null || _profilesCard == null) return;
         // Count visible rows from the MODEL, not Control.Visible: the latter walks the parent
         // chain and returns false for every row while the form is hidden, so on autostart-to-tray
         // (Shown Hide()s before the first detect) it counted 0 and clamped the card to one row.
@@ -2706,19 +2974,155 @@ public class MainForm : Form
         foreach (var grp in _deviceGroups) if (grp.Expanded) visRows += grp.Members.Count;
         foreach (var row in _deviceRows) if (!row.InGroup) visRows++;       // ungrouped rows
         if (visRows == 0) visRows = 1;
-        const int RowPitch = 49, TopMargin = 12, Gap = 12, TitleH = 36, ListPad = 14, PreviewH = 132;
-        // Device card (sized to its visible rows) → a small fixed LIVE PREVIEW → Rescan, stacked
-        // from the top; if the column can't fit them the device list scrolls. Any remaining height
-        // is the gradient backdrop (the preview stays small on purpose).
-        int reserved = TopMargin + Gap + PreviewH + Gap + _rescanButton.Height + Gap;
-        int maxCardH = Math.Max(110, _leftCol.Height - reserved);
-        int cardH = Math.Clamp(TitleH + visRows * RowPitch + ListPad, 110, maxCardH);
-        _devicesCard.Height = cardH;
-        _devicePanel.Height = cardH - 48;
-        int y = TopMargin + cardH + Gap;
-        _previewCard.Top = y;
-        _previewCard.Height = PreviewH;
-        _rescanButton.Top = y + PreviewH + Gap;
+        int pitch = Theme.Classic ? 48 : 52;                                // DeviceRow 48 + its bottom margin
+        int H = _leftCol.Height;
+
+        // footer, from the bottom up: Rescan, the rule, the status block
+        _rescanButton.Top = H - 14 - _rescanButton.Height;
+        int ruleY = _rescanButton.Top - 12;
+        _leftCol.RuleY = ruleY;
+        _status.Top = ruleY - 8 - _status.Height;
+        PlaceStatusDot();
+        int footerTop = _status.Top - 10;
+
+        // Modern: the DEVICES caption shares its baseline with EFFECTS beside it (the content stack
+        // starts at PAD - 6); Classic: both columns' group boxes start at 12.
+        int devTop = Theme.Classic ? 12 : 16;
+        _devicesCard.Top = devTop;
+        int devEdge = 2 * _deviceList.Edge, profEdge = 2 * _profileList.Edge;
+        int nProf = _profileRows.Count;
+        int ProfH(int rows) => CardPanel.SectionTop + (nProf == 0 ? 22 : rows * ProfileRow.RowH + profEdge) + 6;
+        int room = footerTop - devTop - 10;                                 // both cards + the gap between
+        int devFixed = CardPanel.SectionTop + devEdge + 6;
+        int devFull = visRows * pitch;
+        int pv = Math.Clamp(nProf, 1, 5);
+        while (pv > Math.Max(1, Math.Min(2, nProf)) && devFixed + devFull + ProfH(pv) > room) pv--;
+        int listH = Math.Max(Math.Min(pitch, devFull), Math.Min(devFull, room - ProfH(pv) - devFixed));
+        while (pv > 1 && devFixed + listH + ProfH(pv) > room) pv--;
+
+        _deviceList.Height = listH + devEdge;
+        _devicesCard.Height = devFixed + listH;
+        _devicesCard.TitleNote = _deviceRows.Count > 0 ? _deviceRows.Count.ToString() : null;
+        _devicesCard.Invalidate();
+        _profilesCard.Top = _devicesCard.Bottom + 10;
+        _profilesCard.Height = ProfH(pv);
+        _profileList.Visible = nProf > 0;
+        _profileList.SetBounds(CardPanel.SectionPad, CardPanel.SectionTop, _profilesCard.Width - 2 * CardPanel.SectionPad,
+            Math.Max(1, pv) * ProfileRow.RowH + profEdge);
+        // "+": on the caption band (its glyph's right ink on the DEVICES count's edge) in the modern
+        // look; inside the 95 group box, under its frame line, in Classic
+        if (Theme.Classic) _profileAdd.SetBounds(_profilesCard.Width - 8 - 26, 9, 26, 18);
+        else _profileAdd.SetBounds(_profilesCard.Width - CardPanel.SectionPad - 26 + 10, 0, 26, 22);
+    }
+
+    /// <summary>The status is bottom-aligned in its three-line block (it sits on the footer rule); the
+    /// dot follows its FIRST line, wherever that lands.</summary>
+    private void PlaceStatusDot()
+    {
+        if (_status == null || _statusDot == null) return;
+        int h = TextRenderer.MeasureText(_status.Text, _status.Font, new Size(Math.Max(1, _status.Width), int.MaxValue),
+            TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height;
+        h = Math.Clamp(h, 1, _status.Height);
+        _statusDot.Top = _status.Bottom - h + 2;
+    }
+
+    /// <summary>Re-creates the PROFILES rows from settings: each shows its own effect art, its name and
+    /// its trigger process. Click / Enter / Space applies; right-click or the menu key offers Apply and
+    /// Delete…; Delete asks to delete.</summary>
+    private void RebuildProfileRows()
+    {
+        if (_profilesCard == null) return;
+        var content = _profileList.Content;
+        content.SuspendLayout();
+        foreach (var r in _profileRows) { content.Controls.Remove(r); r.Dispose(); }
+        _profileRows.Clear();
+        int w = Math.Max(100, _profileList.RowWidth);
+        foreach (var p in _settings.Profiles)
+        {
+            var row = new ProfileRow(p) { Width = w, Applied = p.Name == _appliedProfile };
+            row.ApplyRequested += (s, _) => ApplyProfile(((ProfileRow)s!).Profile);
+            row.MenuRequested += (s, at) => ShowProfileMenu((ProfileRow)s!, at);
+            row.DeleteRequested += (s, _) => DeleteProfile(((ProfileRow)s!).Profile);
+            string tip = string.IsNullOrWhiteSpace(p.TriggerProcess)
+                ? $"Apply \"{p.Name}\"  ·  right-click for more"
+                : $"Apply \"{p.Name}\" — also applied while {p.TriggerProcess} runs\nRight-click for more";
+            _tips.SetToolTip(row, tip);
+            content.Controls.Add(row);
+            _profileRows.Add(row);
+        }
+        content.ResumeLayout();
+        _profileHint.Visible = _profileRows.Count == 0;
+        LayoutLeftColumn();
+        FitProfileRows();
+    }
+
+    private void FitProfileRows()
+    {
+        int w = _profileList.RowWidth;
+        if (w < 50) return;
+        foreach (var r in _profileRows) if (r.Width != w) r.Width = w;
+    }
+
+    private void ShowProfileMenu(ProfileRow row, Point at)
+    {
+        var menu = Menus.Build();
+        menu.Items.Add(Menus.Header(MenuText(row.Profile.Name)));
+        menu.Items.Add(Menus.Item("Apply", null, (_, _) => ApplyProfile(row.Profile)));
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(Menus.Item("Delete…", null, (_, _) => DeleteProfile(row.Profile)));
+        menu.Show(row, at);
+    }
+
+    /// <summary>Deletes a profile after asking - there is no undo, and it sits one click from Apply.</summary>
+    private void DeleteProfile(LightingProfile p)
+    {
+        if (!ConfirmDeleteProfile(p.Name)) return;
+        _settings.Profiles.Remove(p);
+        _profileCycle = -1;
+        if (_appliedProfile == p.Name) _appliedProfile = null;
+        _settings.Save();
+        RebuildProfileRows();
+    }
+
+    private bool ConfirmDeleteProfile(string name)
+    {
+        using var dlg = new Form
+        {
+            Text = "Delete profile",
+            ClientSize = new Size(330, 132),
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false, MinimizeBox = false, ShowInTaskbar = false,
+            BackColor = Theme.Bg, StartPosition = FormStartPosition.CenterParent,
+            Font = Theme.UiFont(9.5f), KeyPreview = true,
+        };
+        dlg.HandleCreated += (_, _) => { int dark = Theme.Classic ? 0 : 1; try { DwmSetWindowAttribute(dlg.Handle, 20, ref dark, sizeof(int)); } catch { } };
+        dlg.KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) dlg.DialogResult = DialogResult.Cancel; };
+        dlg.Controls.Add(new CrispLabel
+        {
+            Text = $"Delete the profile \"{name}\"?\nThis cannot be undone.", UseMnemonic = false,
+            Left = 18, Top = 16, Width = 294, Height = 48, ForeColor = Theme.TextCol, Font = Theme.UiFont(9.5f),
+        });
+        var del = new RoundedButton { Text = "Delete", Left = 122, Top = 80, Width = 92, Height = 34, ForeColor = Theme.ErrorCol };
+        var cancel = new RoundedButton { Text = "Cancel", Left = 220, Top = 80, Width = 92, Height = 34 };
+        del.Click += (_, _) => dlg.DialogResult = DialogResult.OK;
+        cancel.Click += (_, _) => dlg.DialogResult = DialogResult.Cancel;
+        dlg.Controls.Add(del);
+        dlg.Controls.Add(cancel);
+        dlg.Shown += (_, _) => cancel.Focus();   // the safe answer is the default one
+        return dlg.ShowDialog(this) == DialogResult.OK;
+    }
+
+    private void MarkAppliedProfile(string? name)
+    {
+        _appliedProfile = name;
+        foreach (var r in _profileRows) r.Applied = r.Profile.Name == name;
+    }
+
+    /// <summary>A manual edit of the look (speed, brightness, a device toggle, a per-device effect, the
+    /// gradient end): the rail no longer claims a profile is showing.</summary>
+    private void LookEdited()
+    {
+        if (_applyingProfile == 0 && _appliedProfile != null) MarkAppliedProfile(null);
     }
 
     private void ClearDeviceRows()
@@ -2852,9 +3256,27 @@ public class MainForm : Form
             }
         }
 
-        // live preview: the active target's color rendered through the current effect
+        // live stage + deck line: the active target's colour through the current effect, at FULL value -
+        // the brightness slider says how bright, the preview says what colour (at 6% the dimmed frame
+        // was a near-black smear). The stage gets an LED per ~12 px so a wide stage blends smoothly.
         Color previewBase = _effect == Effect.Ambient ? ambient : ActivePickColor;
-        _preview.SetColors(BuildColorsCore(_effect, previewBase, 22, t, speed, master, _pvFade));
+        int leds = Math.Clamp(_preview.Width / 12, 22, 96);
+        var frame = BuildColorsCore(_effect, previewBase, leds, t, speed, 1.0, _pvFade);
+        bool off = _effect == Effect.Off;
+        _preview.Off = off;
+        _preview.SetColors(frame);
+        if (anyAmbient) _ambientNow = ambient;
+        _deck.SetLive(frame, off, _ambientNow);
+        if (anyAmbient && _ambientNow.ToArgb() != _ambientArtShown)
+        {
+            // the same sampled colour on every Screen-sync picture: device tiles, group tiles, the effect tile
+            _ambientArtShown = _ambientNow.ToArgb();
+            foreach (var row in _deviceRows) row.SetLive(_ambientNow);
+            foreach (var grp in _deviceGroups)
+                if (grp.Members.Count > 0 && grp.Members[0].ArtEffect == Effect.Ambient) grp.InvalidateTile();
+            foreach (var b in _effectButtons)
+                if (b.Tag is Effect.Ambient) b.Invalidate(new Rectangle(9, (b.Height - 22) / 2, 22, 22));
+        }
 
         if (failed != null)
         {

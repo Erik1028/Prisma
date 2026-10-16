@@ -208,7 +208,8 @@ internal static class Program
             if (p.Length == 2 && int.TryParse(p[0], out int w) && int.TryParse(p[1], out int h))
             {
                 form.WindowState = FormWindowState.Normal;
-                form.ClientSize = new Size(w, h);
+                form.StartPosition = FormStartPosition.Manual;
+                form.Size = MainForm.OuterSizeFor(new Size(w, h));   // the real client, not ClientSize= (adds a caption)
             }
         }
         var extra = args.SkipWhile(a => a != "--test-main").Skip(1).ToArray();

@@ -261,7 +261,7 @@ public class ColorPickerDialog : Form
         _hex.Leave += (_, _) => ParseHex();
         Controls.Add(_hex);
 
-        _rgb = new Label
+        _rgb = new CrispLabel
         {
             Left = 184, Top = 312, Width = 112, Height = 18, ForeColor = Theme.Subtle,
             Font = Theme.UiFont(8.5f), TextAlign = ContentAlignment.MiddleRight

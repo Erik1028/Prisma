@@ -122,6 +122,9 @@ public class SettingsForm : Form
             BackColor = Theme.Bg;
         }
 
+        [System.Diagnostics.CodeAnalysis.AllowNull]
+        public override Cursor Cursor { get => Theme.Pointing(base.Cursor); set => base.Cursor = value; }
+
         protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
         protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
 
@@ -135,7 +138,7 @@ public class SettingsForm : Form
             if (Selected)
                 using (var pill = new SolidBrush(Theme.Accent))
                     g.FillPath(pill, Theme.RoundedRect(new Rectangle(0, Height / 2 - 9, 4, 18), 2));
-            TextRenderer.DrawText(g, Text, Font, new Rectangle(16, 0, Width - 20, Height),
+            CrispText.DrawText(g, Text, Font, new Rectangle(16, 0, Width - 20, Height),
                 Selected ? Color.White : Theme.TextCol,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
         }
@@ -192,7 +195,7 @@ public class SettingsForm : Form
         p.Controls.Add(accentCustom);
 
         var opacityRow = new OptionRow("Window opacity") { Left = 0, Top = 300, Width = 412 };
-        var opacityValue = new Label
+        var opacityValue = new CrispLabel
         {
             Text = $"{Math.Clamp(_settings.WindowOpacity, 75, 100)}%", Left = 360, Top = 11, Width = 44,
             ForeColor = Theme.Subtle, Font = Theme.UiFont(9f), BackColor = Theme.RowBg,
@@ -214,7 +217,7 @@ public class SettingsForm : Form
         p.Controls.Add(opacityRow);
 
         var glowRow = new OptionRow("Background glow") { Left = 0, Top = 348, Width = 412 };
-        var glowValue = new Label
+        var glowValue = new CrispLabel
         {
             Text = $"{Math.Clamp(_settings.BackdropGlow, 0, 100)}%", Left = 360, Top = 11, Width = 44,
             ForeColor = Theme.Subtle, Font = Theme.UiFont(9f), BackColor = Theme.RowBg,
@@ -252,9 +255,11 @@ public class SettingsForm : Form
             _settings.ClassicSkin = lookRow.Checked;
             // Applies in place - no restart, so no device re-detect. See MainForm.ApplySkinChange.
             _applyChanges();
-            glassRow.Enabled = opacityRow.Enabled = glowRow.Enabled = !lookRow.Checked;
+            glassRow.Enabled = glowRow.Enabled = !lookRow.Checked;
+            opacityRow.Enabled = !lookRow.Checked && !glassRow.Checked;
         };
-        glassRow.Enabled = opacityRow.Enabled = glowRow.Enabled = !lookRow.Checked;
+        glassRow.Enabled = glowRow.Enabled = !lookRow.Checked;
+        opacityRow.Enabled = !lookRow.Checked && !glassRow.Checked;   // glass suspends the opacity slider
         p.Controls.Add(lookRow);
     }
 
@@ -282,7 +287,7 @@ public class SettingsForm : Form
         // exactly with the parent toggles' captions at 0+40 (they were 4px out before).
         var hoursRow = new OptionRow("Night hours") { Left = 24, Top = 268, Width = 388, Enabled = nightRow.Checked, TextInset = 16 };
         HourPick(hoursRow, _settings.NightStartHour, 190, 6, h => { _settings.NightStartHour = h; _applyChanges(); });
-        hoursRow.Controls.Add(new Label
+        hoursRow.Controls.Add(new CrispLabel
         {
             // centred in the gap between the two 88px pills (190..278 and 292..380 → gap 278..292)
             Text = "–", Left = 278, Top = 6, Width = 14, Height = 30, ForeColor = Theme.Subtle,
@@ -357,7 +362,7 @@ public class SettingsForm : Form
         p.Controls.Add(reverseRow);
 
         p.Controls.Add(SectionLabel("SCREEN SYNC", 208));
-        var vividRow = new OptionRow("Colour boost") { Left = 0, Top = 236, Width = 412 };
+        var vividRow = new OptionRow("Color boost") { Left = 0, Top = 236, Width = 412 };
         GroupButton(vividRow, "Natural", 0, 130, 6, 86, () => _settings.AmbientVividness, v => _settings.AmbientVividness = v, 30);
         GroupButton(vividRow, "Boosted", 1, 224, 6, 86, () => _settings.AmbientVividness, v => _settings.AmbientVividness = v, 30);
         GroupButton(vividRow, "Vivid", 2, 318, 6, 86, () => _settings.AmbientVividness, v => _settings.AmbientVividness = v, 30);
@@ -372,14 +377,14 @@ public class SettingsForm : Form
     private void BuildCommandsTab(Panel p)
     {
         p.Controls.Add(SectionLabel("STREAM DECK / COMMAND LINE", 0));
-        p.Controls.Add(new Label
+        p.Controls.Add(new CrispLabel
         {
             Left = 2, Top = 28, Width = 410, Height = 38, ForeColor = Theme.Subtle, Font = Theme.UiFont(8.5f),
             Text = "Drive Prisma from a Stream Deck, script or shortcut. Each launch forwards its " +
                    "command to the running app and exits — no second window."
         });
 
-        p.Controls.Add(new Label
+        p.Controls.Add(new CrispLabel
         {
             Left = 2, Top = 72, Width = 410, Height = 196, ForeColor = Theme.TextCol,
             Font = new Font("Consolas", 9f),
@@ -390,7 +395,7 @@ public class SettingsForm : Form
                 "                     breathing · strobe · gradient\n" +
                 "                     comet · twinkle · screen\n" +
                 "                     fire · music\n" +
-                "--color #RRGGBB      set colour (e.g. #FF3300)\n" +
+                "--color #RRGGBB      set color (e.g. #FF3300)\n" +
                 "--brightness N       set brightness (0-100, or +10 / -10)\n" +
                 "--speed N            set effect speed (or +10 / -10)\n" +
                 "--profile \"<name>\"   apply a saved profile\n" +
@@ -403,7 +408,7 @@ public class SettingsForm : Form
         var pathBtn = new RoundedButton { Text = "Copy app path", Left = 0, Top = 280, Width = 115, Height = 36 };
         var argsBtn = new RoundedButton { Text = "Copy current as args", Left = 123, Top = 280, Width = 153, Height = 36 };
         var lnkBtn = new RoundedButton { Text = "Create shortcuts", Left = 284, Top = 280, Width = 128, Height = 36 };
-        var done = new Label { Left = 2, Top = 326, Width = 410, Height = 40, ForeColor = Theme.Subtle, Font = Theme.UiFont(8.5f) };
+        var done = new CrispLabel { Left = 2, Top = 326, Width = 410, Height = 40, ForeColor = Theme.Subtle, Font = Theme.UiFont(8.5f) };
 
         pathBtn.Click += (_, _) =>
         {
@@ -421,6 +426,7 @@ public class SettingsForm : Form
         };
         lnkBtn.Click += (_, _) =>
         {
+            if (SystemActionsDisabled) return;   // the harness writes no Desktop shortcuts
             try
             {
                 string dir = CreateCommandShortcuts();
@@ -494,7 +500,7 @@ public class SettingsForm : Form
     private void BuildReliabilityTab(Panel p)
     {
         p.Controls.Add(SectionLabel("RGB SOFTWARE CONFLICTS", 0));
-        p.Controls.Add(new Label
+        p.Controls.Add(new CrispLabel
         {
             Left = 2, Top = 28, Width = 410, Height = 50, ForeColor = Theme.Subtle, Font = Theme.UiFont(8.5f),
             Text = "Other RGB apps (Aura, SignalRGB, iCUE, MSI, Razer…) fight Prisma for the same " +
@@ -512,7 +518,7 @@ public class SettingsForm : Form
         mouseRow.CheckedChanged += (_, _) => { _settings.IgnoreLogitechMouse = mouseRow.Checked; _applyChanges(); };
         p.Controls.Add(mouseRow);
 
-        _conflictStatus = new Label
+        _conflictStatus = new CrispLabel
         {
             // 2 lines max (worst case: "Running now: …\nThese can cause flicker…") — the old
             // 52px + fixed button Top left a ~43px dead band under the 1-line no-conflict text.
@@ -541,7 +547,7 @@ public class SettingsForm : Form
         RefreshConflictStatus();
 
         p.Controls.Add(SectionLabel("GPU LIGHTING RECOVERY", 276));
-        p.Controls.Add(new Label
+        p.Controls.Add(new CrispLabel
         {
             // 3 wrapped lines at this width/font — 46px clipped the last line mid-sentence
             Left = 2, Top = 302, Width = 410, Height = 62, ForeColor = Theme.Subtle, Font = Theme.UiFont(8.5f),
@@ -550,7 +556,7 @@ public class SettingsForm : Form
                    "This sleeps the PC now; wake it and the bar returns."
         });
         var sleepBtn = new RoundedButton { Text = "Sleep PC to recover GPU", Left = 0, Top = 372, Width = 220, Height = 38 };
-        sleepBtn.Click += (_, _) => { try { SetSuspendState(false, false, false); } catch { } };
+        sleepBtn.Click += (_, _) => { if (SystemActionsDisabled) return; try { SetSuspendState(false, false, false); } catch { } };
         p.Controls.Add(sleepBtn);
     }
 
@@ -638,7 +644,7 @@ public class SettingsForm : Form
         };
         p.Controls.Add(logBtn);
 
-        _maintenanceStatus = new Label
+        _maintenanceStatus = new CrispLabel
         {
             Left = 2, Top = 120, Width = 410, Height = 30,
             ForeColor = Theme.Subtle, Font = Theme.UiFont(8.5f)
@@ -652,13 +658,13 @@ public class SettingsForm : Form
         // Assembly.Location is an empty string.
         try { built = File.GetLastWriteTime(Environment.ProcessPath!); }
         catch { built = DateTime.Now; }
-        p.Controls.Add(new Label
+        p.Controls.Add(new CrispLabel
         {
             Left = 2, Top = 190, Width = 410, Height = 24, ForeColor = Theme.TextCol,
             Font = Theme.UiFont(10.5f, FontStyle.Bold),
             Text = $"Prisma {version}"
         });
-        p.Controls.Add(new Label
+        p.Controls.Add(new CrispLabel
         {
             // "(addressable)" dropped: it pushed the drivers line past the label width, wrapping
             // to a one-word orphan and shoving this block into the SHORTCUTS header below.
@@ -675,7 +681,7 @@ public class SettingsForm : Form
         var hotkeyRow = new ToggleRow("Global hotkeys (work from any app)", _settings.GlobalHotkeys) { Left = 0, Top = 358, Width = 412 };
         hotkeyRow.CheckedChanged += (_, _) => { _settings.GlobalHotkeys = hotkeyRow.Checked; _applyChanges(); };
         p.Controls.Add(hotkeyRow);
-        p.Controls.Add(new Label
+        p.Controls.Add(new CrispLabel
         {
             Left = 2, Top = 404, Width = 410, Height = 18, ForeColor = Theme.Subtle, Font = Theme.UiFont(8.5f),
             Text = "Ctrl+Alt+L lights on/off  ·  Ctrl+Alt+P next profile  ·  Ctrl+Alt+R rescan devices"
@@ -705,7 +711,7 @@ public class SettingsForm : Form
 
     private Label SectionLabel(string text, int y)
     {
-        var label = new Label
+        var label = new CrispLabel
         {
             Text = text, Left = 0, Top = y, AutoSize = true,
             // UseMnemonic off: a literal '&' in a heading ("WAVE & GRADIENT") was being
