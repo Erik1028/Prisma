@@ -137,6 +137,8 @@ footer p{max-width:42em}
 }
 
 main > .hero-shot{margin-top:40px!important}
+/* the main window at its own size (a real capture, 914 px): centred rather than stretched */
+.hero-shot.app-shot{max-width:914px;margin-inline:auto!important}
 .card .shot.tall{aspect-ratio:auto;height:360px;display:flex;cursor:zoom-in;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 40%,#1b1e24,#121317)}
 .card .shot.tall img{width:auto;height:auto;max-height:330px;max-width:92%;object-fit:contain;border-radius:8px;box-shadow:0 18px 40px rgba(0,0,0,.45)}
 .cap{margin-top:18px}

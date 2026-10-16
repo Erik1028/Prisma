@@ -34,9 +34,9 @@
 <h1><span class="rainbow">Prisma</span></h1>
 <p>One app for every light in your PC. Motherboard, RAM, GPU, fan strips, keyboard and mouse, driven from a single frame loop so they all move in step. No vendor suites, no cloud, no account.</p>
 <div class="get">
-<a class="btn" href="https://github.com/Erik1028/Prisma/releases/latest" data-asset="^Prisma\.exe$"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M6 10l6 6 6-6M4 21h16"/></svg>Download Prisma.exe<span class="size"></span></a>
-<span class="mono" id="ver">v2.0.0 · 21 Sep 2026</span>
-<span class="alt">For Windows 10 and 11. Or the <a href="https://github.com/Erik1028/Prisma/releases/latest" data-asset="win-x64\.zip$">small zip<span class="size"></span></a>, which needs the <a href="https://dotnet.microsoft.com/download/dotnet/8.0">.NET 8 Desktop Runtime</a>.</span>
+<a class="btn" href="https://github.com/Erik1028/Prisma/releases/latest/download/Prisma.exe" data-asset="^Prisma\.exe$"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M6 10l6 6 6-6M4 21h16"/></svg>Download Prisma.exe<span class="size"> (155 MB)</span></a>
+<span class="mono" id="ver">v2.0.0 · 21 Sept 2026</span>
+<span class="alt">For Windows 10 and 11. Or the <a href="https://github.com/Erik1028/Prisma/releases/latest" data-asset="win-x64\.zip$">small zip<span class="size"> (0.4 MB)</span></a>, which needs the <a href="https://dotnet.microsoft.com/download/dotnet/8.0">.NET 8 Desktop Runtime</a>.</span>
 </div>
 </div>
 
@@ -59,7 +59,7 @@
 
 <main class="wrap">
 
-<figure class="hero-shot" data-slot="img/main.png" data-alt="Prisma's main window" hidden style="margin:0"><div class="shot"></div></figure>
+<figure class="hero-shot app-shot" style="margin:0"><div class="shot"><img src="img/main.png" width="914" height="801" alt="Prisma's main window: four devices ticked on the left (a fan and strip controller, a graphics card, four RAM sticks and a motherboard), the twelve effects, colour swatches with a hue slider, and brightness"></div><figcaption>Prisma 2.0 running on a real PC: a Gigabyte fan controller, a Radeon card, four RAM sticks and an ASUS board, all on one effect.</figcaption></figure>
 
 <section class="block" id="features">
 <h2>What it does</h2>
@@ -74,9 +74,9 @@
 <section class="block" id="effects" data-reveal>
 <h2>12 effects</h2>
 <ul class="chips">
-<li>Static</li><li>Rainbow wave</li><li>Colour cycle</li><li>Breathing</li><li>Strobe</li><li>Two-colour gradient</li><li>Comet</li><li>Twinkle</li><li>Fire</li><li><b>Ambient</b> follows your screen</li><li><b>Music</b> reacts to system audio, with its own bass band</li><li>Surprise</li>
+<li>Static</li><li>Rainbow wave</li><li>Colour cycle</li><li>Breathing</li><li>Strobe</li><li>Two-colour gradient</li><li>Comet</li><li>Twinkle</li><li>Fire</li><li><b>Screen sync</b> follows your screen</li><li><b>Music</b> reacts to system audio, with its own bass band</li><li>Surprise</li>
 </ul>
-<p class="lead">Every device is drawn on one shared loop, 25 frames a second by default (5 to 30 in Settings), so a rainbow on the RAM lines up with the one on the fans. Devices whose firmware can run an effect on their own do so instead of being streamed, which keeps the fragile ones stable.</p>
+<p class="lead">Every device is drawn on one shared loop, 25 frames a second by default (15 or 10 in Settings, for a lighter load), so a rainbow on the RAM lines up with the one on the fans. Devices whose firmware can run an effect on their own do so instead of being streamed, which keeps the fragile ones stable.</p>
 </section>
 
 <section class="block" id="more" data-reveal>
@@ -125,7 +125,7 @@
 <div><h2>Download</h2></div>
 <div>
 <ol>
-<li><a href="https://github.com/Erik1028/Prisma/releases/latest" data-asset="^Prisma\.exe$">Download Prisma.exe</a><span class="size"></span> and run it. Nothing to install.</li>
+<li><a href="https://github.com/Erik1028/Prisma/releases/latest/download/Prisma.exe" data-asset="^Prisma\.exe$">Download Prisma.exe</a><span class="size"> (155 MB)</span> and run it. Nothing to install.</li>
 <li>For motherboard and RAM lighting, install <a href="https://openrgb.org/">OpenRGB</a> and run its server as administrator. The tidy way: a Task Scheduler task called <code>OpenRGB Server</code> that starts at logon with <i>Run with highest privileges</i>. Prisma starts it for you when it's there.</li>
 <li>Tick the devices you want Prisma to drive, pick an effect, done.</li>
 </ol>
@@ -151,7 +151,7 @@
 
 <section class="block" data-reveal>
 <h2>Latest update</h2>
-<div class="latest" id="latest"><span class="v">v2.0.0</span><div><h3>Unified Windows RGB control</h3><p><a href="https://github.com/Erik1028/Prisma/releases">All releases</a></p></div></div>
+<div class="latest" id="latest"><span class="v">v2.0.0</span><div><h3>Unified Windows RGB control</h3><p>One app for the motherboard, RAM, GPU, fan strips, keyboard and mouse — driven from a single 25 fps frame loop so everything actually animates in step. No vendor suite, no cloud, no telemetry, no account.</p><p><a href="https://github.com/Erik1028/Prisma/releases/tag/v2.0.0">Release notes</a> · 21 Sept 2026</p></div></div>
 </section>
 
 </main>

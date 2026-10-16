@@ -1,6 +1,7 @@
 // The latest release from GitHub: version, date, the right download links and a short "latest update".
 // <body data-repo="owner/name">; links with data-asset="regex" point at the matching file of the latest release.
-// Everything here is optional: without it the page still links to the releases page.
+// Everything here is optional: the HTML carries the version, sizes and latest update as of the last edit, so a
+// failed or rate-limited request (GitHub allows 60 an hour per visitor) leaves those in place.
 (function () {
   var repo = document.body.getAttribute('data-repo');
   if (!repo) return;
@@ -27,13 +28,14 @@
       if (box) {
         var name = (rel.name || rel.tag_name).replace(/^[^—–-]*[—–-]\s*/, '') || rel.name;
         name = name.charAt(0).toUpperCase() + name.slice(1);
-        // the first paragraph of the notes; release notes are hard-wrapped, so its lines are joined
+        // the first paragraph of the notes. Release notes are hard-wrapped, so its lines are joined; a list item
+        // keeps its wrapped continuation lines and ends at the next item.
         var para = [], lines = (rel.body || '').split(/\r?\n/).map(function (l) { return l.trim(); });
         for (var i = 0; i < lines.length; i++) {
           var l = lines[i];
           if (!l || /^(#|\||>)/.test(l)) { if (para.length) break; continue; }
-          if (/^[-*]\s*`/.test(l)) continue;
-          if (/^[-*]\s+/.test(l)) { if (!para.length) para.push(l); break; }
+          if (/^[-*]\s*`/.test(l)) { if (para.length) break; continue; }
+          if (/^[-*]\s+/.test(l) && para.length) break;
           para.push(l);
         }
         var first = para.join(' ');
