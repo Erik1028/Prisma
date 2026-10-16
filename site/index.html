@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prisma · one app for every RGB light in your Windows PC</title>
+<meta name="description" content="Prisma drives the motherboard, RAM, GPU, fan strips and Logitech lighting from one frame loop, so every light animates in step. 12 effects, profiles, game triggers. Free, no account.">
+<link rel="canonical" href="https://erik1028.github.io/Prisma/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Erik1028">
+<meta property="og:url" content="https://erik1028.github.io/Prisma/">
+<meta property="og:title" content="Prisma">
+<meta property="og:description" content="One app for every RGB light in your Windows PC: motherboard, RAM, GPU, fan strips, keyboard and mouse, all in step.">
+<meta property="og:image" content="https://erik1028.github.io/Prisma/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#101114">
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "Prisma", "url": "https://erik1028.github.io/Prisma/", "description": "Unified RGB lighting control for Windows: motherboard, RAM, GPU, fan strips, keyboard and mouse driven from one frame loop, with 12 effects, per-device overrides, profiles with game triggers and a native Sapphire GPU driver.", "image": "https://erik1028.github.io/Prisma/og.png", "operatingSystem": "Windows 10, Windows 11", "applicationCategory": "UtilitiesApplication", "downloadUrl": "https://github.com/Erik1028/Prisma/releases/latest", "isAccessibleForFree": true, "inLanguage": "en", "license": "https://opensource.org/licenses/MIT", "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}, "author": {"@type": "Person", "name": "Erik1028", "url": "https://github.com/Erik1028"}, "sameAs": ["https://github.com/Erik1028/Prisma"]}</script>
+<link rel="icon" href="favicon.png" type="image/png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-repo="Erik1028/Prisma">
+
+<div class="band">
+<header class="top">
+<div class="wrap">
+<a class="logo" href="#top"><img src="icon.png" width="30" height="30" alt="">Prisma</a>
+<nav aria-label="Sections"><a class="opt" href="#features">Features</a><a class="opt" href="#hardware">Hardware</a><a href="#install">Download</a><a href="https://erik1028.github.io/">More apps</a></nav>
+</div>
+</header>
+<section class="intro wrap" id="top">
+<div class="intro-text">
+<h1><span class="rainbow">Prisma</span></h1>
+<p>One app for every light in your PC. Motherboard, RAM, GPU, fan strips, keyboard and mouse, driven from a single frame loop so they all move in step. No vendor suites, no cloud, no account.</p>
+<div class="get">
+<a class="btn" href="https://github.com/Erik1028/Prisma/releases/latest" data-asset="^Prisma\.exe$"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M6 10l6 6 6-6M4 21h16"/></svg>Download Prisma.exe<span class="size"></span></a>
+<span class="mono" id="ver">v2.0.0 · 21 Sep 2026</span>
+<span class="alt">For Windows 10 and 11. Or the <a href="https://github.com/Erik1028/Prisma/releases/latest" data-asset="win-x64\.zip$">small zip<span class="size"></span></a>, which needs the <a href="https://dotnet.microsoft.com/download/dotnet/8.0">.NET 8 Desktop Runtime</a>.</span>
+</div>
+</div>
+
+<figure class="rig" id="rig" aria-labelledby="rig-cap">
+<div class="rig-stage" aria-hidden="true">
+<div class="dev fan"><div class="ring"></div><span>Fan</span></div>
+<div class="dev ram"><div class="sticks"><i></i><i></i><i></i><i></i></div><span>RAM ×4</span></div>
+<div class="dev mb"><div class="zones"></div><span>Motherboard</span></div>
+<div class="dev gpu"><div class="bar"></div><span>GPU</span></div>
+<div class="dev mouse"><div class="blob"></div><span>Mouse</span></div>
+</div>
+<div class="rig-controls">
+<div class="fx" role="radiogroup" aria-label="Effect"></div>
+<div class="sw" role="radiogroup" aria-label="Colour"></div>
+</div>
+<figcaption id="rig-cap">Try the effects. This is the app's own effect code, ported to run in your browser on a pretend PC.</figcaption>
+</figure>
+</section>
+</div>
+
+<main class="wrap">
+
+<figure class="hero-shot" data-slot="img/main.png" data-alt="Prisma's main window" hidden style="margin:0"><div class="shot"></div></figure>
+
+<section class="block" id="features">
+<h2>What it does</h2>
+<div class="cards" data-stagger="110">
+<article class="card"><a class="shot tall" href="img/about.png"><img src="img/about.png" width="372" height="568" alt="Prisma's info panel: the current effect, 248 LEDs lit at 25 fps, five devices with their backends, and the render mode" loading="lazy"></a><h3>Everything at a glance</h3><p>Click the rainbow title for what's playing, how many LEDs are lit, which devices and backends are in use, and how each one is driven.</p></article>
+<article class="card"><a class="shot tall" href="img/menu.png"><img src="img/menu.png" width="277" height="220" alt="The right-click menu of a graphics card: turn off, set colour, use as colour target, identify, effect, reset to global" loading="lazy"></a><h3>One device, its own look</h3><p>Right-click any device for its own colour or effect. Identify blinks it so you know which one it is; Reset brings it back to the global look.</p></article>
+<article class="card"><a class="shot tall" href="img/picker.png"><img src="img/picker.png" width="314" height="478" alt="Prisma's colour picker: a hue ring, a saturation square, a hex field and quick swatches" loading="lazy"></a><h3>Any colour</h3><p>A colour wheel with a hex field and quick swatches. Colours you use are kept as swatches in the main window.</p></article>
+</div>
+<p class="cap" data-reveal>The pictures come from Prisma's built-in preview windows, filled with sample devices.</p>
+</section>
+
+<section class="block" id="effects" data-reveal>
+<h2>12 effects</h2>
+<ul class="chips">
+<li>Static</li><li>Rainbow wave</li><li>Colour cycle</li><li>Breathing</li><li>Strobe</li><li>Two-colour gradient</li><li>Comet</li><li>Twinkle</li><li>Fire</li><li><b>Ambient</b> follows your screen</li><li><b>Music</b> reacts to system audio, with its own bass band</li><li>Surprise</li>
+</ul>
+<p class="lead">Every device is drawn on one shared loop, 25 frames a second by default (5 to 30 in Settings), so a rainbow on the RAM lines up with the one on the fans. Devices whose firmware can run an effect on their own do so instead of being streamed, which keeps the fragile ones stable.</p>
+</section>
+
+<section class="block" id="more" data-reveal>
+<h2>Set it and forget it</h2>
+<div class="cols">
+<div>
+<h3>Automation</h3>
+<ul class="list">
+<li><b>Profiles</b>, applied with one click or automatically when a game or program starts, and undone when it closes.</li>
+<li><b>Night schedule</b>: lights off, or dimmed, between hours you pick.</li>
+<li><b>Off when idle</b>, when the PC locks, sleeps or turns the display off, and on exit.</li>
+<li><b>Hotkeys</b> anywhere in Windows: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>L</kbd> lights on/off, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> next profile, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>R</kbd> rescan.</li>
+<li>Lives in the tray, and the tray icon shows the current colour.</li>
+</ul>
+</div>
+<div>
+<h3>Reliability</h3>
+<ul class="list">
+<li><b>Back after sleep.</b> ASUS Aura boards fall back to their own rainbow on wake, and a RAM stick that shows up late can ignore colours. Prisma puts its look back after wake and again while the PC settles after boot.</li>
+<li><b>Names the troublemaker.</b> When another RGB app fights over the same lights, Prisma tells you which one.</li>
+<li><b>Reconnects by itself</b> if the OpenRGB server goes away, and notices when its device list changes.</li>
+<li><b>Careful with Sapphire cards.</b> Their lighting chip can lock up, so Prisma orders its writes to avoid it, and Settings has a one-click sleep to bring it back if it ever does.</li>
+</ul>
+</div>
+</div>
+</section>
+
+<section class="block" id="hardware" data-reveal>
+<h2>What it talks to</h2>
+<p class="lead">Four ways in, used side by side, so the lights keep working when one of them fails.</p>
+<div class="tbl" style="margin-top:18px">
+<table>
+<thead><tr><th scope="col">Way in</th><th scope="col">Devices</th><th scope="col">Needs</th></tr></thead>
+<tbody data-stagger="90">
+<tr><td><b>OpenRGB SDK</b></td><td>Motherboard, RAM and anything else <a href="https://openrgb.org/">OpenRGB</a> finds</td><td>An OpenRGB server, running as administrator</td></tr>
+<tr><td><b>Sapphire Nitro Glow V3</b></td><td>Sapphire Radeon cards with Nitro Glow V3 lighting, through AMD's own driver</td><td>Nothing: no OpenRGB, no admin</td></tr>
+<tr><td><b>Logitech HID++ 2.0</b></td><td>Logitech G gear on a Lightspeed receiver</td><td>Nothing: no G HUB</td></tr>
+<tr><td><b>Gigabyte IT8297 / IT5702</b></td><td>Gigabyte RGB Fusion fan and ARGB strip controllers</td><td>Nothing: direct USB</td></tr>
+</tbody>
+</table>
+</div>
+<p class="aside">What Prisma can light depends on your hardware: the list above is what it supports today. Devices are opt-in one by one, so you can leave a mouse to its own software.</p>
+</section>
+
+<section class="block two" id="install" data-reveal>
+<div><h2>Download</h2></div>
+<div>
+<ol>
+<li><a href="https://github.com/Erik1028/Prisma/releases/latest" data-asset="^Prisma\.exe$">Download Prisma.exe</a><span class="size"></span> and run it. Nothing to install.</li>
+<li>For motherboard and RAM lighting, install <a href="https://openrgb.org/">OpenRGB</a> and run its server as administrator. The tidy way: a Task Scheduler task called <code>OpenRGB Server</code> that starts at logon with <i>Run with highest privileges</i>. Prisma starts it for you when it's there.</li>
+<li>Tick the devices you want Prisma to drive, pick an effect, done.</li>
+</ol>
+<p class="aside"><b>Run only one OpenRGB.</b> Two servers setting up the same memory bus can freeze a device until the PC is fully powered off. Prisma's conflict check is there to catch it. Windows SmartScreen may warn the first time because the app isn't signed: <i>More info › Run anyway</i>.</p>
+</div>
+</section>
+
+<section class="block" id="cli" data-reveal>
+<h2>From a Stream Deck or a script</h2>
+<p class="lead">Start <code>Prisma.exe</code> with any of these while it's already running and the command goes to the open app. Settings › Commands can make ready-made shortcuts for you.</p>
+<pre class="cli"><code><span>--toggle</span>               lights on / off
+<span>--off</span>                  everything off
+<span>--effect</span> rainbow       static, rainbow, cycle, breathing, strobe, gradient,
+                       comet, twinkle, fire, ambient, music, surprise, off
+<span>--color</span> 00c8aa         6-digit hex
+<span>--brightness</span> 60        1–100, or +10 / -10
+<span>--speed</span> 50             1–100, or +10 / -10
+<span>--profile</span> Gaming       a saved profile, by name
+<span>--next-profile</span>
+<span>--show</span>                 bring the window up
+<span>--minimized</span>            start hidden in the tray</code></pre>
+</section>
+
+<section class="block" data-reveal>
+<h2>Latest update</h2>
+<div class="latest" id="latest"><span class="v">v2.0.0</span><div><h3>Unified Windows RGB control</h3><p><a href="https://github.com/Erik1028/Prisma/releases">All releases</a></p></div></div>
+</section>
+
+</main>
+
+<footer>
+<div class="wrap">
+<p>Prisma by <a href="https://github.com/Erik1028">Erik1028</a>. Free and open source, MIT license. Not affiliated with OpenRGB, ASUS, Gigabyte, Logitech, Sapphire or AMD.</p>
+<span><a href="https://erik1028.github.io/">More apps</a> · <a href="https://github.com/Erik1028/Prisma">Source</a> · <a href="https://github.com/Erik1028/Prisma/releases">Releases</a></span>
+</div>
+</footer>
+
+<script src="site.js"></script>
+<script src="prisma.js"></script>
+<script src="motion.js"></script>
+</body>
+</html>
